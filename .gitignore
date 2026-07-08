@@ -1,0 +1,6 @@
+.DS_Store
+*.pem
+.claude/
+
+# Segredos reais locais — só o .env.example (template com placeholders) vai pro Git.
+supabase/.env

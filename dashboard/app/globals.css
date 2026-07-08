@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+:root {
+  /* Marca */
+  --color-navy-950: #0c2a3d;
+  --color-navy-900: #123a54;
+  --color-navy-700: #1a4a6b;
+  --color-navy-600: #215880; /* cor de marca oficial */
+  --color-navy-500: #2c6e9e;
+  --color-navy-400: #4a8ab8;
+  --color-navy-100: #dce9f1;
+  --color-navy-50: #f0f6fa;
+
+  --color-coral-700: #e03a39;
+  --color-coral-600: #ff5453; /* cor de marca oficial */
+  --color-coral-500: #ff6e6d;
+  --color-coral-400: #ff8988;
+  --color-coral-100: #ffe1e1;
+  --color-coral-50: #fff3f3;
+
+  /* Neutros */
+  --color-gray-900: #1a1a1a;
+  --color-gray-700: #2b2b2b;
+  --color-gray-500: #6e6e6e;
+  --color-gray-300: #b4b4b4;
+  --color-gray-100: #e8e8e8;
+  --color-gray-50: #f7f7f7;
+  --color-white: #ffffff;
+
+  /* Semânticas — nunca usar hex direto nos componentes */
+  --color-primary: var(--color-navy-600);
+  --color-primary-hover: var(--color-navy-700);
+  --color-primary-active: var(--color-navy-900);
+
+  --color-accent: var(--color-coral-600);
+  --color-accent-hover: var(--color-coral-700);
+
+  --color-bg: var(--color-white);
+  --color-bg-subtle: var(--color-gray-50);
+  --color-surface: var(--color-white);
+  --color-border: var(--color-gray-100);
+
+  --color-text-primary: var(--color-gray-900);
+  --color-text-secondary: var(--color-gray-500);
+  --color-text-inverse: var(--color-white);
+  --color-text-link: var(--color-navy-600);
+
+  --color-success: #1e8e5a;
+  --color-warning: #c97a0c;
+  --color-error: #d9302f;
+  --color-info: var(--color-navy-500);
+
+  --shadow-focus-value: 0 0 0 3px rgba(33, 88, 128, 0.35);
+}
+
+@theme inline {
+  --font-sans: var(--font-montserrat), var(--font-open-sans), system-ui, sans-serif;
+  --font-heading: var(--font-montserrat), system-ui, sans-serif;
+
+  --color-navy-950: var(--color-navy-950);
+  --color-navy-900: var(--color-navy-900);
+  --color-navy-700: var(--color-navy-700);
+  --color-navy-600: var(--color-navy-600);
+  --color-navy-500: var(--color-navy-500);
+  --color-navy-400: var(--color-navy-400);
+  --color-navy-100: var(--color-navy-100);
+  --color-navy-50: var(--color-navy-50);
+
+  --color-coral-700: var(--color-coral-700);
+  --color-coral-600: var(--color-coral-600);
+  --color-coral-500: var(--color-coral-500);
+  --color-coral-400: var(--color-coral-400);
+  --color-coral-100: var(--color-coral-100);
+  --color-coral-50: var(--color-coral-50);
+
+  --color-gray-900: var(--color-gray-900);
+  --color-gray-700: var(--color-gray-700);
+  --color-gray-500: var(--color-gray-500);
+  --color-gray-300: var(--color-gray-300);
+  --color-gray-100: var(--color-gray-100);
+  --color-gray-50: var(--color-gray-50);
+
+  --color-primary: var(--color-primary);
+  --color-primary-hover: var(--color-primary-hover);
+  --color-primary-active: var(--color-primary-active);
+  --color-accent: var(--color-accent);
+  --color-accent-hover: var(--color-accent-hover);
+  --color-bg: var(--color-bg);
+  --color-bg-subtle: var(--color-bg-subtle);
+  --color-surface: var(--color-surface);
+  --color-border: var(--color-border);
+  --color-text-primary: var(--color-text-primary);
+  --color-text-secondary: var(--color-text-secondary);
+  --color-text-inverse: var(--color-text-inverse);
+  --color-text-link: var(--color-text-link);
+  --color-success: var(--color-success);
+  --color-warning: var(--color-warning);
+  --color-error: var(--color-error);
+  --color-info: var(--color-info);
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+
+  --shadow-sm: 0 1px 2px rgba(26, 26, 26, 0.06);
+  --shadow-md: 0 4px 12px rgba(26, 26, 26, 0.08);
+  --shadow-lg: 0 12px 32px rgba(26, 26, 26, 0.12);
+  --shadow-focus: var(--shadow-focus-value);
+}
+
+body {
+  background: var(--color-bg-subtle);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
