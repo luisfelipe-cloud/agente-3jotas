@@ -1,7 +1,7 @@
 // Converte linhas cruas do Supabase (snake_case, nulls onde não há análise
 // ainda) para os tipos que os componentes do dashboard já esperam.
 
-import { CRITERIOS, type AnaliseStatus, type CorretorRanking, type CriterioKey, type CriterioResultado, type ConversaAnalisada, type EtapaPlaybook, type ParametroCriterio, type PlaybookScript } from "./types";
+import { CRITERIOS, type AnaliseStatus, type ApresentacaoResumo, type CorretorRanking, type CriterioKey, type CriterioResultado, type ConversaAnalisada, type EtapaPlaybook, type ParametroCriterio, type PlaybookScript } from "./types";
 
 interface CorretorRankingRow {
   corretor_id: string;
@@ -112,5 +112,23 @@ export function mapPlaybookScript(row: PlaybookRow): PlaybookScript {
     ativo: row.ativo,
     criadoEm: row.created_at,
     atualizadoEm: row.updated_at,
+  };
+}
+
+interface ApresentacaoRow {
+  id: string;
+  titulo: string;
+  data_inicio: string;
+  data_fim: string;
+  criado_em: string;
+}
+
+export function mapApresentacaoResumo(row: ApresentacaoRow): ApresentacaoResumo {
+  return {
+    id: row.id,
+    titulo: row.titulo,
+    dataInicio: row.data_inicio,
+    dataFim: row.data_fim,
+    criadoEm: row.criado_em,
   };
 }

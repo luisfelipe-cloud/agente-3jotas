@@ -13,6 +13,16 @@ function base(props: SVGProps<SVGSVGElement>) {
   };
 }
 
+export function IconPresentation(props: SVGProps<SVGSVGElement>) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3" y="4" width="18" height="12" rx="1" />
+      <path d="M12 16v4M8 20h8" />
+      <path d="m7 10 3-3 2 2 4-4" />
+    </svg>
+  );
+}
+
 export function IconMoreVertical(props: SVGProps<SVGSVGElement>) {
   return (
     <svg {...base(props)} fill="currentColor" stroke="none">

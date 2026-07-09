@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
-import { mapCorretorRanking, mapConversaAnalisada } from "@/lib/mappers";
+import { mapApresentacaoResumo, mapCorretorRanking, mapConversaAnalisada } from "@/lib/mappers";
 import { CorretorAnalises } from "@/components/CorretorAnalises";
 import { PeriodoCorretoresFiltro } from "@/components/PeriodoCorretoresFiltro";
 
@@ -46,6 +46,14 @@ export default async function CorretorPage({
     .select("texto, baseado_em_conversas, gerado_em")
     .eq("corretor_id", id)
     .maybeSingle();
+
+  const { data: apresentacoesRows } = await supabase
+    .from("apresentacoes")
+    .select("id, titulo, data_inicio, data_fim, criado_em")
+    .eq("corretor_id", id)
+    .order("criado_em", { ascending: false });
+
+  const apresentacoes = (apresentacoesRows ?? []).map(mapApresentacaoResumo);
 
   const { data: conversasRows } = await supabase
     .from("conversas")
@@ -109,7 +117,10 @@ export default async function CorretorPage({
       <CorretorAnalises
         conversas={conversas}
         insight={insight ?? null}
+        corretorId={id}
         corretorNome={ranking.corretor.nome_crm}
+        periodo={{ inicio, fim }}
+        apresentacoesIniciais={apresentacoes}
         filtro={<PeriodoCorretoresFiltro />}
       />
     </div>

@@ -1,11 +1,18 @@
 "use client";
 
 import { useMemo, useState, type ReactNode } from "react";
-import { CRITERIOS, CRITERIO_LABEL, ETAPA_LABEL, type ConversaAnalisada, type CriterioKey } from "@/lib/types";
+import { useRouter } from "next/navigation";
+import { CRITERIOS, CRITERIO_LABEL, ETAPA_LABEL, type ApresentacaoResumo, type ConversaAnalisada, type CriterioKey } from "@/lib/types";
+import { mapApresentacaoResumo } from "@/lib/mappers";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { MiniBar } from "@/components/ui/MiniBar";
 import { ChatModal } from "@/components/ChatModal";
+import { IconButton } from "@/components/ui/IconButton";
+import { KebabMenu } from "@/components/ui/KebabMenu";
+import { ConfirmModal } from "@/components/ui/ConfirmModal";
+import { Toast, type ToastMensagem } from "@/components/ui/Toast";
+import { IconPresentation } from "@/components/ui/icons";
 
 function scoreColor(score: number) {
   return score >= 1.6 ? "bg-success" : score >= 1.0 ? "bg-warning" : "bg-error";
@@ -31,15 +38,28 @@ interface InsightCorretor {
 export function CorretorAnalises({
   conversas,
   insight,
+  corretorId,
   corretorNome,
+  periodo,
+  apresentacoesIniciais,
   filtro,
 }: {
   conversas: ConversaAnalisada[];
   insight: InsightCorretor | null;
+  corretorId: string;
   corretorNome: string;
+  periodo: { inicio: string; fim: string };
+  apresentacoesIniciais: ApresentacaoResumo[];
   filtro?: ReactNode;
 }) {
-  const [aba, setAba] = useState<"analisadas" | "nao_analisadas">("analisadas");
+  const router = useRouter();
+  const [secao, setSecao] = useState<"conversas" | "apresentacoes">("conversas");
+  const [filtroConversas, setFiltroConversas] = useState<"analisadas" | "nao_analisadas">("analisadas");
+  const [apresentacoes, setApresentacoes] = useState(apresentacoesIniciais);
+  const [gerando, setGerando] = useState(false);
+  const [excluindo, setExcluindo] = useState<ApresentacaoResumo | null>(null);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [toast, setToast] = useState<ToastMensagem | null>(null);
 
   const conversasAnalisadas = useMemo(() => conversas.filter((c) => c.status !== "nao_elegivel"), [conversas]);
   const conversasNaoAnalisadas = useMemo(() => conversas.filter((c) => c.status === "nao_elegivel"), [conversas]);
@@ -56,31 +76,90 @@ export function CorretorAnalises({
     ) as Record<CriterioKey, number>;
   }, [concluidas]);
 
+  async function gerarApresentacao() {
+    setGerando(true);
+    try {
+      const resp = await fetch("/api/apresentacoes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          corretorId,
+          corretorNome,
+          dataInicio: periodo.inicio,
+          dataFim: periodo.fim,
+          mediasPorCriterio,
+          insight: insight?.texto ?? null,
+          conversas: concluidas.map((c) => ({
+            leadNome: c.leadNome,
+            iniciadaEm: c.iniciadaEm,
+            criterios: Object.fromEntries(
+              CRITERIOS.map((k) => [k, { score: c.criterios[k].score, evidencia: c.criterios[k].evidencia, justificativa: c.criterios[k].justificativa }]),
+            ),
+          })),
+        }),
+      }).then((r) => r.json());
+
+      if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao gerar apresentação");
+
+      setApresentacoes((prev) => [mapApresentacaoResumo(resp.apresentacao), ...prev]);
+      setSecao("apresentacoes");
+      setToast({ tipo: "ok", texto: "Apresentação gerada com sucesso." });
+      router.refresh();
+    } catch (err) {
+      setToast({ tipo: "erro", texto: err instanceof Error ? err.message : "Falha ao gerar apresentação" });
+    } finally {
+      setGerando(false);
+    }
+  }
+
+  async function confirmarExclusaoApresentacao() {
+    if (!excluindo) return;
+    setConfirmandoExclusao(true);
+    try {
+      const resp = await fetch(`/api/apresentacoes/${excluindo.id}`, { method: "DELETE" }).then((r) => r.json());
+      if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao excluir apresentação");
+
+      setApresentacoes((prev) => prev.filter((a) => a.id !== excluindo.id));
+      setExcluindo(null);
+      setToast({ tipo: "ok", texto: "Apresentação excluída." });
+      router.refresh();
+    } catch (err) {
+      setToast({ tipo: "erro", texto: err instanceof Error ? err.message : "Falha ao excluir apresentação" });
+    } finally {
+      setConfirmandoExclusao(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         {filtro}
-        <div className="inline-flex rounded-full bg-gray-50 p-1">
-          <button
-            onClick={() => setAba("analisadas")}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-              aba === "analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
-            }`}
-          >
-            Analisadas ({conversasAnalisadas.length})
-          </button>
-          <button
-            onClick={() => setAba("nao_analisadas")}
-            className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-              aba === "nao_analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
-            }`}
-          >
-            Não analisadas ({conversasNaoAnalisadas.length})
-          </button>
+        <div className="flex items-center gap-2">
+          <IconButton label="Gerar apresentação" onClick={gerarApresentacao} disabled={gerando} className="h-7 w-7">
+            <IconPresentation className={`h-3.5 w-3.5 ${gerando ? "animate-pulse" : ""}`} />
+          </IconButton>
+          <div className="inline-flex rounded-full bg-gray-50 p-1">
+            <button
+              onClick={() => setSecao("conversas")}
+              className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                secao === "conversas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+              }`}
+            >
+              Conversas
+            </button>
+            <button
+              onClick={() => setSecao("apresentacoes")}
+              className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                secao === "apresentacoes" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+              }`}
+            >
+              Apresentações ({apresentacoes.length})
+            </button>
+          </div>
         </div>
       </div>
 
-      {aba === "analisadas" ? (
+      {secao === "conversas" && (
         <>
           <Card variant="elevated">
             <p className="text-xs font-medium text-text-secondary uppercase tracking-wide mb-4">
@@ -112,37 +191,107 @@ export function CorretorAnalises({
           </Card>
 
           <div className="space-y-3">
-            <h2 className="text-sm font-semibold text-navy-900">Conversas</h2>
-            {conversasAnalisadas.length === 0 && <p className="text-sm text-text-secondary">Nenhuma conversa neste período.</p>}
-            {conversasAnalisadas.map((conversa) => (
-              <ConversaCard key={conversa.conversaId} conversa={conversa} corretorNome={corretorNome} />
-            ))}
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-sm font-semibold text-navy-900">Conversas</h2>
+              <div className="inline-flex rounded-full bg-gray-50 p-1">
+                <button
+                  onClick={() => setFiltroConversas("analisadas")}
+                  className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                    filtroConversas === "analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+                  }`}
+                >
+                  Analisadas ({conversasAnalisadas.length})
+                </button>
+                <button
+                  onClick={() => setFiltroConversas("nao_analisadas")}
+                  className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                    filtroConversas === "nao_analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+                  }`}
+                >
+                  Não analisadas ({conversasNaoAnalisadas.length})
+                </button>
+              </div>
+            </div>
+
+            {filtroConversas === "analisadas" ? (
+              <>
+                {conversasAnalisadas.length === 0 && <p className="text-sm text-text-secondary">Nenhuma conversa neste período.</p>}
+                {conversasAnalisadas.map((conversa) => (
+                  <ConversaCard key={conversa.conversaId} conversa={conversa} corretorNome={corretorNome} />
+                ))}
+              </>
+            ) : (
+              <>
+                <p className="text-xs text-text-secondary">
+                  Conversas que ainda não atingiram o mínimo pra entrar na fila de análise (3 mensagens no total, sendo 2 do lead).
+                </p>
+                {conversasNaoAnalisadas.length === 0 ? (
+                  <p className="text-sm text-text-secondary">Nenhuma conversa não analisada neste período.</p>
+                ) : (
+                  conversasNaoAnalisadas.map((conversa) => (
+                    <Card key={conversa.conversaId} variant="elevated" className="border-l-4 border-l-gray-300 !rounded-md">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="min-w-0">
+                          <p className="font-semibold text-text-primary truncate">{conversa.leadNome}</p>
+                          <p className="text-xs text-text-secondary mt-0.5">
+                            {new Date(conversa.iniciadaEm).toLocaleString("pt-BR")}
+                          </p>
+                        </div>
+                        <Badge variant="neutral">{motivoNaoAnalisada(conversa)}</Badge>
+                      </div>
+                    </Card>
+                  ))
+                )}
+              </>
+            )}
           </div>
         </>
-      ) : (
+      )}
+
+      {secao === "apresentacoes" && (
         <div className="space-y-3">
           <p className="text-xs text-text-secondary">
-            Conversas que ainda não atingiram o mínimo pra entrar na fila de análise (3 mensagens no total, sendo 2 do lead).
+            Gerada a partir do período selecionado no filtro De/Até acima. Clique no ícone de apresentação pra criar uma nova.
           </p>
-          {conversasNaoAnalisadas.length === 0 ? (
-            <p className="text-sm text-text-secondary">Nenhuma conversa não analisada neste período.</p>
+          {apresentacoes.length === 0 ? (
+            <p className="text-sm text-text-secondary">Nenhuma apresentação gerada ainda.</p>
           ) : (
-            conversasNaoAnalisadas.map((conversa) => (
-              <Card key={conversa.conversaId} variant="elevated" className="border-l-4 border-l-gray-300 !rounded-md">
-                <div className="flex items-center justify-between gap-4">
-                  <div className="min-w-0">
-                    <p className="font-semibold text-text-primary truncate">{conversa.leadNome}</p>
-                    <p className="text-xs text-text-secondary mt-0.5">
-                      {new Date(conversa.iniciadaEm).toLocaleString("pt-BR")}
-                    </p>
-                  </div>
-                  <Badge variant="neutral">{motivoNaoAnalisada(conversa)}</Badge>
+            apresentacoes.map((ap) => (
+              <Card key={ap.id} variant="elevated" className="flex items-center justify-between gap-4 !rounded-md">
+                <div className="min-w-0">
+                  <p className="font-semibold text-text-primary truncate">{ap.titulo}</p>
+                  <p className="text-xs text-text-secondary mt-0.5">
+                    Gerada em {new Date(ap.criadoEm).toLocaleDateString("pt-BR")}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <a
+                    href={`/api/apresentacoes/${ap.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-sm font-medium text-navy-600 hover:underline"
+                  >
+                    Abrir →
+                  </a>
+                  <KebabMenu items={[{ label: "Excluir", onClick: () => setExcluindo(ap), tone: "danger" }]} />
                 </div>
               </Card>
             ))
           )}
         </div>
       )}
+
+      {excluindo && (
+        <ConfirmModal
+          titulo="Excluir apresentação"
+          mensagem={`Excluir a apresentação "${excluindo.titulo}"? Essa ação não pode ser desfeita.`}
+          confirmando={confirmandoExclusao}
+          onConfirmar={confirmarExclusaoApresentacao}
+          onCancelar={() => setExcluindo(null)}
+        />
+      )}
+
+      {toast && <Toast mensagem={toast} onDone={() => setToast(null)} />}
     </div>
   );
 }

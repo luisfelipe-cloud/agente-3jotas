@@ -4,7 +4,10 @@ import { NextResponse, type NextRequest } from "next/server";
 // Protege todas as rotas do dashboard — sem sessão válida, redireciona pra
 // /login. Usuários são criados manualmente no painel do Supabase
 // (Authentication > Users), não existe cadastro público aqui.
-export async function middleware(request: NextRequest) {
+//
+// Next.js 16 renomeou "middleware" pra "proxy" (arquivo e função) — este
+// projeto usa a convenção nova (proxy.ts / export function proxy).
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {

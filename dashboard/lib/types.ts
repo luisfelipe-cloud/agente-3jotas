@@ -57,6 +57,14 @@ export interface ConversaAnalisada {
   resumoRevisao: string | null;
 }
 
+export interface ApresentacaoResumo {
+  id: string;
+  titulo: string;
+  dataInicio: string;
+  dataFim: string;
+  criadoEm: string;
+}
+
 export interface CorretorRanking {
   corretor: Corretor;
   totalConversas: number;
