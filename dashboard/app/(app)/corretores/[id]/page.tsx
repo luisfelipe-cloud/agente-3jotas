@@ -84,6 +84,7 @@ export default async function CorretorPage({
       return t >= dataInicio.getTime() && t <= dataFim.getTime();
     })
     .map((c) => {
+      // leadTelefone vem do join com leads(telefone) logo acima.
       const leadsRel = c.leads as unknown as
         | { nome_crm: string | null; telefone: string | null }[]
         | { nome_crm: string | null; telefone: string | null }
