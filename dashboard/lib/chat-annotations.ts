@@ -8,8 +8,8 @@ export interface AnotacaoCriterio {
 }
 
 function tomDoScore(score: number): AnotacaoCriterio["tom"] {
-  if (score >= 1.6) return "positivo";
-  if (score >= 1.0) return "neutro";
+  if (score >= 8) return "positivo";
+  if (score >= 5) return "neutro";
   return "negativo";
 }
 

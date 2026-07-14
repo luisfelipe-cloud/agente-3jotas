@@ -101,7 +101,7 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
 
     for (const c of CRITERIOS) {
       const score = scoreDe(a, c);
-      if (score !== null && score < 1) {
+      if (score !== null && score < 5) {
         entry.total++;
         entry.porCriterio[c]++;
       }

@@ -45,6 +45,7 @@ export interface MensagemChat {
 export interface ConversaAnalisada {
   conversaId: string;
   leadNome: string;
+  leadTelefone: string | null;
   iniciadaEm: string;
   analisadoEm: string | null;
   etapaPlaybook: EtapaPlaybook | null;

@@ -91,6 +91,7 @@ export function CorretorAnalises({
           insight: insight?.texto ?? null,
           conversas: concluidas.map((c) => ({
             leadNome: c.leadNome,
+            leadTelefone: c.leadTelefone,
             iniciadaEm: c.iniciadaEm,
             criterios: Object.fromEntries(
               CRITERIOS.map((k) => [k, { score: c.criterios[k].score, evidencia: c.criterios[k].evidencia, justificativa: c.criterios[k].justificativa }]),
@@ -232,7 +233,12 @@ export function CorretorAnalises({
                     <Card key={conversa.conversaId} variant="elevated" className="border-l-4 border-l-gray-300 !rounded-md">
                       <div className="flex items-center justify-between gap-4">
                         <div className="min-w-0">
-                          <p className="font-semibold text-text-primary truncate">{conversa.leadNome}</p>
+                          <p className="font-semibold text-text-primary truncate">
+                            {conversa.leadNome}
+                            {conversa.leadTelefone && (
+                              <span className="font-normal text-text-secondary"> · {conversa.leadTelefone}</span>
+                            )}
+                          </p>
                           <p className="text-xs text-text-secondary mt-0.5">
                             {new Date(conversa.iniciadaEm).toLocaleString("pt-BR")}
                           </p>
@@ -308,7 +314,7 @@ function ConversaCard({ conversa, corretorNome }: { conversa: ConversaAnalisada;
   const [aberto, setAberto] = useState(false);
   const [chatAberto, setChatAberto] = useState(false);
   const analisada = conversa.status === "concluida";
-  const criteriosComProblema = analisada ? CRITERIOS.filter((c) => conversa.criterios[c].score < 1.5) : [];
+  const criteriosComProblema = analisada ? CRITERIOS.filter((c) => conversa.criterios[c].score < 7.5) : [];
 
   const corBorda = !analisada
     ? "border-l-gray-300"
@@ -327,7 +333,10 @@ function ConversaCard({ conversa, corretorNome }: { conversa: ConversaAnalisada;
     <Card variant="elevated" className={`border-l-4 ${corBorda} !rounded-md`}>
       <button onClick={() => setAberto((v) => !v)} className="w-full flex items-center justify-between gap-4 text-left">
         <div className="min-w-0">
-          <p className="font-semibold text-text-primary truncate">{conversa.leadNome}</p>
+          <p className="font-semibold text-text-primary truncate">
+            {conversa.leadNome}
+            {conversa.leadTelefone && <span className="font-normal text-text-secondary"> · {conversa.leadTelefone}</span>}
+          </p>
           <p className="text-xs text-text-secondary mt-0.5">
             {new Date(conversa.iniciadaEm).toLocaleString("pt-BR")}
             {conversa.etapaPlaybook && ` · ${ETAPA_LABEL[conversa.etapaPlaybook]}`}

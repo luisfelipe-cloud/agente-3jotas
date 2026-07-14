@@ -41,6 +41,7 @@ interface ConversaRow {
   iniciada_em: string;
   etapa_playbook: EtapaPlaybook | null;
   leadNome: string | null;
+  leadTelefone: string | null;
   totalMensagens: number;
   mensagensDoLead: number;
 }
@@ -64,6 +65,7 @@ export function mapConversaAnalisada(
   return {
     conversaId: conversa.id,
     leadNome: conversa.leadNome ?? `Lead ${conversa.id.slice(0, 8)}`,
+    leadTelefone: conversa.leadTelefone,
     iniciadaEm: conversa.iniciada_em,
     analisadoEm: analise?.analisado_em ?? null,
     etapaPlaybook: conversa.etapa_playbook,

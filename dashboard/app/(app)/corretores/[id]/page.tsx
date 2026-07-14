@@ -57,7 +57,7 @@ export default async function CorretorPage({
 
   const { data: conversasRows } = await supabase
     .from("conversas")
-    .select("id, iniciada_em, etapa_playbook, leads(nome_crm)")
+    .select("id, iniciada_em, etapa_playbook, leads(nome_crm, telefone)")
     .eq("corretor_id", id)
     .order("iniciada_em", { ascending: false });
 
@@ -84,7 +84,10 @@ export default async function CorretorPage({
       return t >= dataInicio.getTime() && t <= dataFim.getTime();
     })
     .map((c) => {
-      const leadsRel = c.leads as unknown as { nome_crm: string | null }[] | { nome_crm: string | null } | null;
+      const leadsRel = c.leads as unknown as
+        | { nome_crm: string | null; telefone: string | null }[]
+        | { nome_crm: string | null; telefone: string | null }
+        | null;
       const lead = Array.isArray(leadsRel) ? leadsRel[0] : leadsRel;
       const elegibilidade = elegibilidadePorConversa.get(c.id);
 
@@ -94,6 +97,7 @@ export default async function CorretorPage({
           iniciada_em: c.iniciada_em,
           etapa_playbook: c.etapa_playbook,
           leadNome: lead?.nome_crm ?? null,
+          leadTelefone: lead?.telefone ?? null,
           totalMensagens: elegibilidade?.total_mensagens ?? 0,
           mensagensDoLead: elegibilidade?.mensagens_lead ?? 0,
         },

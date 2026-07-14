@@ -43,7 +43,11 @@ export function ChatModal({
     mensagens && analisada ? anotarMensagens(mensagens, conversa.criterios) : new Map();
 
   return (
-    <Modal open={open} onClose={onClose} title={`Conversa com ${conversa.leadNome}`}>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`Conversa com ${conversa.leadNome}${conversa.leadTelefone ? ` · ${conversa.leadTelefone}` : ""}`}
+    >
       <div className="space-y-4">
         {analisada && conversa.justificativaGeral && (
           <p className="text-sm text-text-secondary bg-navy-50 rounded-md px-3 py-2">{conversa.justificativaGeral}</p>

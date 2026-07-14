@@ -36,7 +36,12 @@ export async function POST(req: Request) {
     dataInicio?: string;
     dataFim?: string;
     mediasPorCriterio?: Record<CriterioKey, number>;
-    conversas?: { leadNome: string; iniciadaEm: string; criterios: Record<CriterioKey, { score: number; evidencia: string; justificativa: string }> }[];
+    conversas?: {
+      leadNome: string;
+      leadTelefone: string | null;
+      iniciadaEm: string;
+      criterios: Record<CriterioKey, { score: number; evidencia: string; justificativa: string }>;
+    }[];
     insight?: string | null;
   };
 

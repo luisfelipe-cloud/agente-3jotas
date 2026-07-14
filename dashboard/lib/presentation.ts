@@ -10,6 +10,7 @@ interface CriterioResumo {
 
 interface ConversaResumo {
   leadNome: string;
+  leadTelefone: string | null;
   iniciadaEm: string;
   criterios: Record<CriterioKey, CriterioResumo>;
 }
@@ -24,13 +25,14 @@ export interface DadosApresentacao {
 }
 
 // Mesmo limiar usado no dashboard (Pontos de atenção): abaixo disso o
-// critério é tratado como erro, não só "abaixo da média".
-const LIMIAR_ERRO = 1;
+// critério é tratado como erro, não só "abaixo da média". Escala 0-10
+// (nota_maxima configurado hoje pra todos os critérios).
+const LIMIAR_ERRO = 5;
 const MAX_ERROS_EXIBIDOS = 6;
 
 function corDoScore(score: number): string {
-  if (score >= 1.6) return "#1E8E5A";
-  if (score >= 1.0) return "#C97A0C";
+  if (score >= 8) return "#1E8E5A";
+  if (score >= 5) return "#C97A0C";
   return "#D9302F";
 }
 
@@ -75,7 +77,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
 
   const barrasCriterio = CRITERIOS.map((c) => {
     const valor = mediasPorCriterio[c];
-    const pct = Math.min(100, Math.max(0, (valor / 2) * 100));
+    const pct = Math.min(100, Math.max(0, (valor / 10) * 100));
     return `
       <div class="barra-linha">
         <div class="barra-label">
@@ -90,6 +92,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
     .flatMap((c) =>
       CRITERIOS.filter((k) => c.criterios[k].score < LIMIAR_ERRO).map((k) => ({
         leadNome: c.leadNome,
+        leadTelefone: c.leadTelefone,
         criterio: k,
         evidencia: c.criterios[k].evidencia,
         justificativa: c.criterios[k].justificativa,
@@ -105,7 +108,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
       <div class="callout callout-erro">
         <div class="callout-topo">
           <span class="callout-tag tag-erro">${CRITERIO_LABEL[e.criterio]}</span>
-          <span class="callout-lead">${escapeHtml(e.leadNome)}</span>
+          <span class="callout-lead">${escapeHtml(e.leadNome)}${e.leadTelefone ? ` · ${escapeHtml(e.leadTelefone)}` : ""}</span>
         </div>
         ${e.evidencia ? `<p class="callout-evidencia">&ldquo;${escapeHtml(e.evidencia)}&rdquo;</p>` : ""}
         <p class="callout-texto">${escapeHtml(e.justificativa || "Critério não atendido.")}</p>
@@ -122,7 +125,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
       ).join("");
       return `
         <tr>
-          <td>${escapeHtml(c.leadNome)}</td>
+          <td>${escapeHtml(c.leadNome)}${c.leadTelefone ? `<span class="lead-telefone"> · ${escapeHtml(c.leadTelefone)}</span>` : ""}</td>
           <td>${new Date(c.iniciadaEm).toLocaleDateString("pt-BR")}</td>
           <td class="pontos-cel">${pontos}</td>
           <td style="color:${corDoScore(media)};font-weight:700">${media.toFixed(1)}</td>
@@ -149,7 +152,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
         <div class="painel-desempenho">
           <div class="media-bloco">
             <p class="kicker">Média geral</p>
-            <div class="media-geral" style="color:${corDoScore(mediaGeral)}">${mediaGeral.toFixed(1)}<span>/2.0</span></div>
+            <div class="media-geral" style="color:${corDoScore(mediaGeral)}">${mediaGeral.toFixed(1)}<span>/10</span></div>
             <p class="legenda">${conversas.length} conversa${conversas.length === 1 ? "" : "s"} concluída${conversas.length === 1 ? "" : "s"} no período</p>
           </div>
           <div class="barras">${barrasCriterio}</div>
@@ -256,6 +259,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   .tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
   .tabela th { text-align: left; color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); font-weight: 700; }
   .tabela td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
+  .lead-telefone { color: var(--muted); font-weight: 400; }
   .tabela tbody tr:last-child td { border-bottom: none; }
   .pontos-cel { display: flex; gap: 4px; }
   .ponto { display: inline-block; width: 7px; height: 7px; border-radius: 999px; }
