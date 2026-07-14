@@ -15,7 +15,7 @@ import { Toast, type ToastMensagem } from "@/components/ui/Toast";
 import { IconPresentation } from "@/components/ui/icons";
 
 function scoreColor(score: number) {
-  return score >= 1.6 ? "bg-success" : score >= 1.0 ? "bg-warning" : "bg-error";
+  return score >= 8 ? "bg-success" : score >= 5 ? "bg-warning" : "bg-error";
 }
 
 function motivoNaoAnalisada(c: ConversaAnalisada): string {

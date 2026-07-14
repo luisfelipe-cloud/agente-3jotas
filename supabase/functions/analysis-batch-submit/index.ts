@@ -102,25 +102,29 @@ function createServiceClient() {
   return createClient(url, key);
 }
 
-async function buscarPlaybookAtivo(
+const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
+  primeiro_contato: "1º Contato",
+  envio_simulacao: "Envio de Simulação",
+  resultado_analise: "Resultado de Análise",
+};
+
+// Mesmo critério das outras duas functions do pipeline: o critério
+// "playbook" é avaliado de forma fria e agnóstica de etapa — todos os
+// playbooks ativos entram como referência, sem tentar adivinhar em qual
+// etapa a conversa está.
+async function buscarPlaybooksAtivos(
   // deno-lint-ignore no-explicit-any
   supabase: any,
-  etapa: EtapaPlaybook | null,
 ): Promise<string> {
-  if (!etapa) return "Etapa da conversa não identificada — avalie com base nas boas práticas gerais de atendimento descritas nos critérios.";
+  const { data, error } = await supabase.from("playbooks").select("etapa, conteudo").eq("ativo", true);
 
-  const { data, error } = await supabase
-    .from("playbooks")
-    .select("conteudo")
-    .eq("etapa", etapa)
-    .eq("ativo", true)
-    .single();
-
-  if (error || !data) {
-    throw new Error(`playbook ativo não encontrado para etapa "${etapa}": ${error?.message ?? "sem registro"}`);
+  if (error || !data?.length) {
+    return "Nenhum playbook configurado — avalie com base nas boas práticas gerais de atendimento descritas no critério.";
   }
 
-  return data.conteudo as string;
+  return data
+    .map((p: { etapa: EtapaPlaybook; conteudo: string }) => `[${ETAPA_LABEL[p.etapa] ?? p.etapa}]\n${p.conteudo}`)
+    .join("\n\n");
 }
 
 async function buscarParametrosAtivos(
@@ -139,7 +143,6 @@ async function buscarParametrosAtivos(
 }
 
 function montarRequestBody(
-  conversa: Conversa,
   mensagens: Mensagem[],
   playbook: string,
   // deno-lint-ignore no-explicit-any
@@ -151,7 +154,9 @@ function montarRequestBody(
 
   const systemPrompt = `Você avalia atendimentos de corretores de crédito imobiliário no WhatsApp.
 
-Script/playbook aplicável à etapa "${conversa.etapa_playbook ?? "desconhecida"}":
+Playbooks configurados (técnicas/scripts de referência da imobiliária — ver
+critério "playbook" no schema para o julgamento esperado, que é frio e
+agnóstico de etapa):
 """
 ${playbook}
 """
@@ -241,8 +246,9 @@ Deno.serve(async (req) => {
     return new Response(err instanceof Error ? err.message : String(err), { status: 500 });
   }
 
-  // Cache de playbook por etapa — evita repetir a query para cada conversa da mesma etapa.
-  const playbookCache = new Map<string, string>();
+  // Mesmos playbooks pra todas as conversas do lote (avaliação é agnóstica
+  // de etapa) — busca uma vez só, fora do loop.
+  const playbook = await buscarPlaybooksAtivos(supabase);
 
   const requests: { custom_id: string; params: unknown }[] = [];
   const semMensagens: string[] = [];
@@ -259,16 +265,9 @@ Deno.serve(async (req) => {
       continue;
     }
 
-    const chaveEtapa = conversa.etapa_playbook ?? "__sem_etapa__";
-    let playbook = playbookCache.get(chaveEtapa);
-    if (playbook === undefined) {
-      playbook = await buscarPlaybookAtivo(supabase, conversa.etapa_playbook);
-      playbookCache.set(chaveEtapa, playbook);
-    }
-
     requests.push({
       custom_id: conversa.id,
-      params: montarRequestBody(conversa, mensagens, playbook, avaliacaoTool),
+      params: montarRequestBody(mensagens, playbook, avaliacaoTool),
     });
   }
 

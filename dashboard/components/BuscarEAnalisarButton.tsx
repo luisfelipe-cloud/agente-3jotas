@@ -24,7 +24,15 @@ export function BuscarEAnalisarButton() {
     setResultado(null);
     try {
       const resp = await fetch("/api/buscar-e-analisar", { method: "POST" });
-      const dados = await resp.json();
+      const texto = await resp.text();
+      let dados: Resultado;
+      try {
+        dados = JSON.parse(texto);
+      } catch {
+        // Resposta não-JSON (ex: página de erro/timeout da plataforma) — não
+        // deixa o SyntaxError bruto vazar pra tela, mostra algo legível.
+        dados = { ok: false, erro: `Resposta inesperada do servidor (status ${resp.status}). Tente de novo.` };
+      }
       setResultado(dados);
       router.refresh();
     } catch (err) {

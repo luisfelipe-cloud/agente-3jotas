@@ -27,7 +27,7 @@ export default async function DashboardPage() {
           trend={{ value: d.variacaoChatsAnalisadosPercentual, label: "vs. ontem" }}
         />
         <StatCard label="Pendentes de análise" value={d.conversasPendentesAnalise} hint="Na fila de processamento" />
-        <StatCard label="Média geral" value={d.mediaGeralQuinzena.toFixed(1)} hint="Quinzena atual · escala 0-2" />
+        <StatCard label="Média geral" value={d.mediaGeralQuinzena.toFixed(1)} hint="Quinzena atual · escala 0-10" />
         <StatCard label="Pontos de atenção" value={d.pontosAtencao.length} hint="Detectados nas últimas 24h" />
       </div>
 

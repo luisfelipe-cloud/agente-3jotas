@@ -16,7 +16,15 @@ export function SincronizarButton() {
 
     try {
       const resp = await fetch("/api/sync-conversas", { method: "POST" });
-      const dados = await resp.json();
+      const texto = await resp.text();
+      let dados: { ok: boolean; erro?: string; chats_processados?: number; mensagens_gravadas?: number };
+      try {
+        dados = JSON.parse(texto);
+      } catch {
+        // Resposta não-JSON (ex: página de erro/timeout da plataforma) — não
+        // deixa o SyntaxError bruto vazar pra tela, mostra algo legível.
+        dados = { ok: false, erro: `Resposta inesperada do servidor (status ${resp.status}). Tente de novo.` };
+      }
 
       if (!resp.ok || dados.ok === false) {
         setMensagem({ tipo: "erro", texto: typeof dados.erro === "string" ? dados.erro : "Falha ao sincronizar" });

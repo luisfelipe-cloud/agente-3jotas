@@ -13,7 +13,7 @@ export function TendenciaChart({ dados }: { dados: DashboardOverview["tendenciaD
         <YAxis
           yAxisId="right"
           orientation="right"
-          domain={[0, 2]}
+          domain={[0, 10]}
           tick={{ fontSize: 12, fill: "var(--color-text-secondary)" }}
           axisLine={false}
           tickLine={false}

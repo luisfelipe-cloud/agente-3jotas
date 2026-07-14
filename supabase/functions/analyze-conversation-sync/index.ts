@@ -90,25 +90,30 @@ function createServiceClient() {
   return createClient(url, key);
 }
 
-async function buscarPlaybookAtivo(
+const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
+  primeiro_contato: "1º Contato",
+  envio_simulacao: "Envio de Simulação",
+  resultado_analise: "Resultado de Análise",
+};
+
+// Não tenta adivinhar em qual etapa a conversa está — o critério "playbook"
+// é avaliado de forma fria e agnóstica de etapa: a IA recebe TODOS os
+// playbooks ativos configurados e julga se o corretor recorreu a alguma
+// dessas técnicas quando precisou, não se seguiu literalmente um script
+// específico (ver descrição do critério em parametros_analise).
+async function buscarPlaybooksAtivos(
   // deno-lint-ignore no-explicit-any
   supabase: any,
-  etapa: EtapaPlaybook | null,
 ): Promise<string> {
-  if (!etapa) return "Etapa da conversa não identificada — avalie com base nas boas práticas gerais de atendimento descritas nos critérios.";
+  const { data, error } = await supabase.from("playbooks").select("etapa, conteudo").eq("ativo", true);
 
-  const { data, error } = await supabase
-    .from("playbooks")
-    .select("conteudo")
-    .eq("etapa", etapa)
-    .eq("ativo", true)
-    .single();
-
-  if (error || !data) {
-    throw new Error(`playbook ativo não encontrado para etapa "${etapa}": ${error?.message ?? "sem registro"}`);
+  if (error || !data?.length) {
+    return "Nenhum playbook configurado — avalie com base nas boas práticas gerais de atendimento descritas no critério.";
   }
 
-  return data.conteudo as string;
+  return data
+    .map((p: { etapa: EtapaPlaybook; conteudo: string }) => `[${ETAPA_LABEL[p.etapa] ?? p.etapa}]\n${p.conteudo}`)
+    .join("\n\n");
 }
 
 async function buscarParametrosAtivos(
@@ -170,7 +175,6 @@ function montarAvaliacaoSchema(parametros: ParametroCriterio[]) {
 }
 
 function montarRequestBody(
-  conversa: Conversa,
   mensagens: Mensagem[],
   playbook: string,
   // deno-lint-ignore no-explicit-any
@@ -182,7 +186,10 @@ function montarRequestBody(
 
   const systemPrompt = `Você avalia atendimentos de corretores de crédito imobiliário no WhatsApp.
 
-Script/playbook aplicável à etapa "${conversa.etapa_playbook ?? "desconhecida"}":
+Playbooks configurados (técnicas/scripts de referência da imobiliária — não é
+obrigatório que o corretor siga literalmente, mas devem ser usados como apoio
+quando a conversa pede, ver critério "playbook" no schema para o julgamento
+esperado):
 """
 ${playbook}
 """
@@ -212,6 +219,13 @@ function montarUpsertAnalise(conversaId: string, resultado: Record<string, any>)
     modelo_usado: MODEL,
     erro: null,
     analisado_em: new Date().toISOString(),
+    // Reanálise (conversa continuou depois de já ter sido analisada) invalida
+    // qualquer revisão anterior — sem isso, o resultado novo herdaria
+    // `revisado=true` de uma revisão que julgou uma versão desatualizada da
+    // conversa, e o 2º passe nunca rodaria de novo sobre o resultado atual.
+    revisado: false,
+    revisado_em: null,
+    resumo_revisao: null,
   };
 
   for (const criterio of CRITERIOS) {
@@ -312,11 +326,11 @@ Deno.serve(async (req) => {
 
   try {
     const [playbook, parametros] = await Promise.all([
-      buscarPlaybookAtivo(supabase, conversa.etapa_playbook),
+      buscarPlaybooksAtivos(supabase),
       buscarParametrosAtivos(supabase),
     ]);
     const responseSchema = montarAvaliacaoSchema(parametros);
-    const resultado = await avaliarComGemini(conversa, mensagens, playbook, responseSchema);
+    const resultado = await avaliarComGemini(mensagens, playbook, responseSchema);
 
     await supabase.from("analises").upsert(montarUpsertAnalise(conversa_id, resultado), {
       onConflict: "conversa_id",
@@ -352,7 +366,6 @@ Deno.serve(async (req) => {
 });
 
 async function avaliarComGemini(
-  conversa: Conversa,
   mensagens: Mensagem[],
   playbook: string,
   // deno-lint-ignore no-explicit-any
@@ -365,7 +378,7 @@ async function avaliarComGemini(
   const resp = await fetch(`${GEMINI_API_URL}/${MODEL}:generateContent?key=${apiKey}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(montarRequestBody(conversa, mensagens, playbook, responseSchema)),
+    body: JSON.stringify(montarRequestBody(mensagens, playbook, responseSchema)),
   });
 
   if (!resp.ok) {

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CRITERIOS, type CorretorRanking } from "@/lib/types";
 import { Card } from "@/components/ui/Card";
 import { Input } from "@/components/ui/Input";
@@ -24,7 +24,7 @@ const CRITERIO_SIGLA: Record<(typeof CRITERIOS)[number], string> = {
 };
 
 function corDaMedia(score: number) {
-  return score >= 1.6 ? "text-success" : score >= 1.0 ? "text-warning" : "text-error";
+  return score >= 8 ? "text-success" : score >= 5 ? "text-warning" : "text-error";
 }
 
 function iniciais(nome: string) {
@@ -37,6 +37,12 @@ function iniciais(nome: string) {
 
 export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Preserva o período selecionado na lista ao entrar na página do corretor —
+  // senão a tela de dentro sempre reseta pra "hoje", perdendo o filtro de
+  // fora (ex: usuário escolheu 12 a 15, entra num corretor e via dados de
+  // "hoje" em vez do período que ele tinha escolhido).
+  const queryPeriodo = searchParams.toString();
   const [editandoId, setEditandoId] = useState<string | null>(null);
   const [criando, setCriando] = useState(false);
   const [nomeForm, setNomeForm] = useState("");
@@ -223,7 +229,10 @@ export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
                 ))}
               </div>
 
-              <Link href={`/corretores/${r.corretor.id}`} className="block text-sm font-medium text-navy-600 hover:underline">
+              <Link
+                href={`/corretores/${r.corretor.id}${queryPeriodo ? `?${queryPeriodo}` : ""}`}
+                className="block text-sm font-medium text-navy-600 hover:underline"
+              >
                 Ver análises →
               </Link>
             </Card>

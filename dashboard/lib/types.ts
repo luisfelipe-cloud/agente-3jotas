@@ -76,7 +76,7 @@ export interface CorretorRanking {
 
 export interface ParametroCriterio {
   criterio: CriterioKey;
-  notaMaxima: number; // escala 0..N usada na avaliação (ex: 0-2)
+  notaMaxima: number; // escala 0..N usada na avaliação (hoje: 0-10 pra todos os critérios)
   pesoPercentual: number; // peso desse critério na média geral, soma deve dar 100
   descricao: string; // instrução enviada ao LLM para avaliar esse critério
   ativo: boolean;

@@ -75,13 +75,12 @@ export default async function CorretorPage({
 
   const conversas = (conversasRows ?? [])
     .filter((c) => {
-      // Mesmo critério de data usado no ranking (corretor_ranking): conversas
-      // já analisadas contam pela data da análise, não da conversa em si —
-      // senão uma conversa analisada hoje mas iniciada ontem some da tela
-      // quando o filtro é "hoje", mesmo contando no card de fora.
-      const analise = analisesPorConversa.get(c.id);
-      const dataRelevante = analise?.analisado_em ?? c.iniciada_em;
-      const t = new Date(dataRelevante).getTime();
+      // Mesmo critério de data usado no ranking (corretor_ranking): data real
+      // da conversa (iniciada_em), não a data em que a IA processou a
+      // análise — senão reprocessar em lote (ex: resync completo) faz
+      // conversas antigas aparecerem no filtro "hoje" só porque foram
+      // (re)analisadas hoje.
+      const t = new Date(c.iniciada_em).getTime();
       return t >= dataInicio.getTime() && t <= dataFim.getTime();
     })
     .map((c) => {
@@ -105,7 +104,10 @@ export default async function CorretorPage({
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div>
-        <Link href="/corretores" className="text-sm font-medium text-navy-600 hover:underline">
+        <Link
+          href={`/corretores?inicio=${inicio}&fim=${fim}`}
+          className="text-sm font-medium text-navy-600 hover:underline"
+        >
           ← Corretores
         </Link>
         <h1 className="text-2xl font-extrabold text-navy-900 mt-1">{ranking.corretor.nome_crm}</h1>

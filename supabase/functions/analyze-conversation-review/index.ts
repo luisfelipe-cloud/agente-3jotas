@@ -75,15 +75,26 @@ function createServiceClient() {
   return createClient(url, key);
 }
 
-async function buscarPlaybookAtivo(
+const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
+  primeiro_contato: "1º Contato",
+  envio_simulacao: "Envio de Simulação",
+  resultado_analise: "Resultado de Análise",
+};
+
+// Mesmo critério do 1º passe (analyze-conversation-sync): o critério
+// "playbook" é avaliado de forma fria e agnóstica de etapa — todos os
+// playbooks ativos entram como referência, sem tentar adivinhar em qual
+// etapa a conversa está.
+async function buscarPlaybooksAtivos(
   // deno-lint-ignore no-explicit-any
   supabase: any,
-  etapa: EtapaPlaybook | null,
 ): Promise<string> {
-  if (!etapa) return "Etapa da conversa não identificada — avalie com base nas boas práticas gerais de atendimento descritas nos critérios.";
+  const { data } = await supabase.from("playbooks").select("etapa, conteudo").eq("ativo", true);
+  if (!data?.length) return "Nenhum playbook configurado — avalie com base nas boas práticas gerais de atendimento descritas no critério.";
 
-  const { data } = await supabase.from("playbooks").select("conteudo").eq("etapa", etapa).eq("ativo", true).single();
-  return data?.conteudo ?? "Playbook ativo não encontrado — avalie com base nas boas práticas gerais.";
+  return data
+    .map((p: { etapa: EtapaPlaybook; conteudo: string }) => `[${ETAPA_LABEL[p.etapa] ?? p.etapa}]\n${p.conteudo}`)
+    .join("\n\n");
 }
 
 async function buscarParametrosAtivos(
@@ -144,11 +155,20 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
 
   const ativos = parametros.filter((p) => p.ativo);
 
-  const [{ data: conversa }, { data: bruta }, { data: todasMensagens }] = await Promise.all([
+  const [
+    { data: conversa, error: conversaError },
+    { data: bruta },
+    { data: todasMensagens },
+  ] = await Promise.all([
     supabase.from("conversas").select("id, etapa_playbook, humano_assumiu_em").eq("id", conversaId).single<Conversa>(),
     supabase.from("analises_bruta").select("*").eq("conversa_id", conversaId).maybeSingle(),
     supabase.from("mensagens").select("*").eq("conversa_id", conversaId).order("enviada_em", { ascending: true }).returns<Mensagem[]>(),
   ]);
+
+  // Erro real de banco/schema (ex: coluna renomeada) é caso transiente — não
+  // pode se disfarçar de "sem análise crua", senão fica revisado=true pra
+  // sempre e ninguém percebe que o 2º passe parou de rodar de verdade.
+  if (conversaError) throw new Error(`buscar conversa falhou: ${conversaError.message}`);
 
   if (!ativos.length || !conversa || !bruta || !todasMensagens?.length) {
     await marcarComoPulada(supabase, conversaId, "sem análise crua (analises_bruta) pra revisar — provavelmente analisada antes desse recurso existir.");
@@ -163,7 +183,7 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
     return "pulada";
   }
 
-  const playbook = await buscarPlaybookAtivo(supabase, conversa.etapa_playbook);
+  const playbook = await buscarPlaybooksAtivos(supabase);
 
   const transcricao = mensagens
     .map((m) => `[${m.enviada_em}] ${m.remetente === "corretor" ? "Corretor" : "Lead"}: ${m.texto}`)
@@ -187,7 +207,9 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
 
   const systemPrompt = `Você é um revisor sênior de QA, mais experiente que o avaliador que fez a primeira passada desta conversa.
 
-Script/playbook aplicável à etapa "${conversa.etapa_playbook ?? "desconhecida"}":
+Playbooks configurados (técnicas/scripts de referência da imobiliária — ver
+critério "playbook" no schema para o julgamento esperado, que é frio e
+agnóstico de etapa):
 """
 ${playbook}
 """

@@ -1,4 +1,4 @@
-export function MiniBar({ label, value, max = 2 }: { label: string; value: number; max?: number }) {
+export function MiniBar({ label, value, max = 10 }: { label: string; value: number; max?: number }) {
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
   const color = value >= max * 0.8 ? "bg-success" : value >= max * 0.5 ? "bg-warning" : "bg-error";
 
