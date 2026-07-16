@@ -308,6 +308,7 @@ const STATUS_LABEL: Record<ConversaAnalisada["status"], string> = {
   falhou: "Falha na análise",
   concluida: "Concluída",
   nao_elegivel: "Não elegível",
+  consolidada: "Consolidada em outra conversa",
 };
 
 function ConversaCard({ conversa, corretorNome }: { conversa: ConversaAnalisada; corretorNome: string }) {
@@ -381,7 +382,9 @@ function ConversaCard({ conversa, corretorNome }: { conversa: ConversaAnalisada;
             <p className="text-sm text-text-secondary">
               {conversa.status === "falhou"
                 ? "A análise dessa conversa falhou e será reprocessada."
-                : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
+                : conversa.status === "consolidada"
+                  ? "O Clint reabriu essa conversa com o lead em um chat novo — o contexto dela foi incluído na análise da conversa mais recente desse mesmo lead com esse corretor."
+                  : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
             </p>
           ) : (
             <>

@@ -3,7 +3,7 @@ export type EtapaPlaybook =
   | "envio_simulacao"
   | "resultado_analise";
 
-export type AnaliseStatus = "pendente" | "processando" | "concluida" | "falhou" | "nao_elegivel";
+export type AnaliseStatus = "pendente" | "processando" | "concluida" | "falhou" | "nao_elegivel" | "consolidada";
 
 export interface Corretor {
   id: string;

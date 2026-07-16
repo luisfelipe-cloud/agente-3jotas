@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 
-// POST — cria um novo script de playbook. Se vier ativo=true, desativa
-// primeiro qualquer outro script ativo da mesma etapa (índice único parcial
-// `idx_playbooks_ativo_por_etapa` só permite um ativo por etapa).
+// POST — cria um novo script de playbook. Vários podem estar ativos ao
+// mesmo tempo (inclusive da mesma etapa) — o critério "playbook" já avalia
+// juntando todos os ativos como referência, não é mais 1 por etapa.
 export async function POST(req: Request) {
   const body = await req.json();
 
@@ -12,13 +12,6 @@ export async function POST(req: Request) {
   }
 
   const supabase = createServiceClient();
-
-  if (body.ativo === true) {
-    const { error: desativarError } = await supabase.from("playbooks").update({ ativo: false }).eq("etapa", body.etapa).eq("ativo", true);
-    if (desativarError) {
-      return NextResponse.json({ ok: false, erro: desativarError.message }, { status: 500 });
-    }
-  }
 
   const { data, error } = await supabase
     .from("playbooks")

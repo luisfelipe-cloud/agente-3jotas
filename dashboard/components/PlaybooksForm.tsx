@@ -54,12 +54,7 @@ export function PlaybooksForm({ playbooksIniciais }: { playbooksIniciais: Playbo
 
     if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao salvar script");
 
-    setPlaybooks((prev) => {
-      // Ativar este desativa os demais da mesma etapa localmente — espelha o
-      // índice único do banco (1 ativo por etapa).
-      const atualizados = prev.map((p) => (p.id === pb.id ? pb : p.etapa === pb.etapa && pb.ativo ? { ...p, ativo: false } : p));
-      return atualizados;
-    });
+    setPlaybooks((prev) => prev.map((p) => (p.id === pb.id ? pb : p)));
     setEditando(null);
     setToast({ tipo: "ok", texto: "Script salvo com sucesso." });
     router.refresh();

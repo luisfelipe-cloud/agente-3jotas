@@ -31,6 +31,7 @@ interface Conversa {
   iniciada_em: string;
   finalizada_em: string | null;
   humano_assumiu_em: string | null;
+  substituida_por_id: string | null;
 }
 
 interface ParametroCriterio {
@@ -107,6 +108,36 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   envio_simulacao: "Envio de Simulação",
   resultado_analise: "Resultado de Análise",
 };
+
+// Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
+// conversas do mesmo grupo (lead_id + corretor_id), não só a canônica.
+async function buscarMensagensDoGrupo(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  conversa: Conversa,
+): Promise<Mensagem[]> {
+  const canonicaId = conversa.substituida_por_id ?? conversa.id;
+
+  const { data: grupo } = await supabase
+    .from("conversas")
+    .select("id, humano_assumiu_em")
+    .or(`id.eq.${canonicaId},substituida_por_id.eq.${canonicaId}`);
+
+  const conversaIds = (grupo ?? []).map((c: { id: string }) => c.id);
+  const handoffPorConversa = new Map((grupo ?? []).map((c: { id: string; humano_assumiu_em: string | null }) => [c.id, c.humano_assumiu_em]));
+
+  const { data: todasMensagens } = await supabase
+    .from("mensagens")
+    .select("*")
+    .in("conversa_id", conversaIds)
+    .order("enviada_em", { ascending: true })
+    .returns<Mensagem[]>();
+
+  return (todasMensagens ?? []).filter((m) => {
+    const handoff = handoffPorConversa.get(m.conversa_id);
+    return !handoff || m.enviada_em > handoff;
+  });
+}
 
 // Mesmo critério das outras duas functions do pipeline: o critério
 // "playbook" é avaliado de forma fria e agnóstica de etapa — todos os
@@ -220,24 +251,6 @@ Deno.serve(async (req) => {
     return new Response(`erro ao buscar conversas: ${conversasError?.message}`, { status: 500 });
   }
 
-  const { data: todasMensagens, error: mensagensError } = await supabase
-    .from("mensagens")
-    .select("*")
-    .in("conversa_id", conversaIds)
-    .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
-
-  if (mensagensError) {
-    return new Response(`erro ao buscar mensagens: ${mensagensError.message}`, { status: 500 });
-  }
-
-  const mensagensPorConversa = new Map<string, Mensagem[]>();
-  for (const m of todasMensagens ?? []) {
-    const lista = mensagensPorConversa.get(m.conversa_id) ?? [];
-    lista.push(m);
-    mensagensPorConversa.set(m.conversa_id, lista);
-  }
-
   let avaliacaoTool;
   try {
     const parametros = await buscarParametrosAtivos(supabase);
@@ -254,12 +267,7 @@ Deno.serve(async (req) => {
   const semMensagens: string[] = [];
 
   for (const conversa of conversas) {
-    const todasDaConversa = mensagensPorConversa.get(conversa.id) ?? [];
-    // Se um agente de IA qualificou o lead antes do corretor humano entrar,
-    // tudo até o handoff fica de fora — não é atendimento do corretor.
-    const mensagens = conversa.humano_assumiu_em
-      ? todasDaConversa.filter((m) => m.enviada_em > conversa.humano_assumiu_em!)
-      : todasDaConversa;
+    const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
     if (mensagens.length === 0) {
       semMensagens.push(conversa.id);
       continue;

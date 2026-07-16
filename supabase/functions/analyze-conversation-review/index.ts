@@ -49,8 +49,11 @@ interface Mensagem {
 
 interface Conversa {
   id: string;
+  lead_id: string;
+  corretor_id: string;
   etapa_playbook: EtapaPlaybook | null;
   humano_assumiu_em: string | null;
+  substituida_por_id: string | null;
 }
 
 interface ParametroCriterio {
@@ -85,6 +88,37 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
 // "playbook" é avaliado de forma fria e agnóstica de etapa — todos os
 // playbooks ativos entram como referência, sem tentar adivinhar em qual
 // etapa a conversa está.
+// Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
+// conversas do mesmo grupo (lead_id + corretor_id), não só a canônica, pra
+// revisar com o contexto completo da relação com o lead.
+async function buscarMensagensDoGrupo(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  conversa: Conversa,
+): Promise<Mensagem[]> {
+  const canonicaId = conversa.substituida_por_id ?? conversa.id;
+
+  const { data: grupo } = await supabase
+    .from("conversas")
+    .select("id, humano_assumiu_em")
+    .or(`id.eq.${canonicaId},substituida_por_id.eq.${canonicaId}`);
+
+  const conversaIds = (grupo ?? []).map((c: { id: string }) => c.id);
+  const handoffPorConversa = new Map((grupo ?? []).map((c: { id: string; humano_assumiu_em: string | null }) => [c.id, c.humano_assumiu_em]));
+
+  const { data: todasMensagens } = await supabase
+    .from("mensagens")
+    .select("*")
+    .in("conversa_id", conversaIds)
+    .order("enviada_em", { ascending: true })
+    .returns<Mensagem[]>();
+
+  return (todasMensagens ?? []).filter((m) => {
+    const handoff = handoffPorConversa.get(m.conversa_id);
+    return !handoff || m.enviada_em > handoff;
+  });
+}
+
 async function buscarPlaybooksAtivos(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -155,14 +189,13 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
 
   const ativos = parametros.filter((p) => p.ativo);
 
-  const [
-    { data: conversa, error: conversaError },
-    { data: bruta },
-    { data: todasMensagens },
-  ] = await Promise.all([
-    supabase.from("conversas").select("id, etapa_playbook, humano_assumiu_em").eq("id", conversaId).single<Conversa>(),
+  const [{ data: conversa, error: conversaError }, { data: bruta }] = await Promise.all([
+    supabase
+      .from("conversas")
+      .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
+      .eq("id", conversaId)
+      .single<Conversa>(),
     supabase.from("analises_bruta").select("*").eq("conversa_id", conversaId).maybeSingle(),
-    supabase.from("mensagens").select("*").eq("conversa_id", conversaId).order("enviada_em", { ascending: true }).returns<Mensagem[]>(),
   ]);
 
   // Erro real de banco/schema (ex: coluna renomeada) é caso transiente — não
@@ -170,14 +203,12 @@ async function revisarUmaConversa(supabase: any, conversaId: string, parametros:
   // sempre e ninguém percebe que o 2º passe parou de rodar de verdade.
   if (conversaError) throw new Error(`buscar conversa falhou: ${conversaError.message}`);
 
-  if (!ativos.length || !conversa || !bruta || !todasMensagens?.length) {
+  const mensagens = conversa ? await buscarMensagensDoGrupo(supabase, conversa) : [];
+
+  if (!ativos.length || !conversa || !bruta || !mensagens.length) {
     await marcarComoPulada(supabase, conversaId, "sem análise crua (analises_bruta) pra revisar — provavelmente analisada antes desse recurso existir.");
     return "pulada";
   }
-
-  const mensagens = conversa.humano_assumiu_em
-    ? todasMensagens.filter((m) => m.enviada_em > conversa.humano_assumiu_em!)
-    : todasMensagens;
   if (!mensagens.length) {
     await marcarComoPulada(supabase, conversaId, "sem mensagens após o handoff da IA de qualificação.");
     return "pulada";

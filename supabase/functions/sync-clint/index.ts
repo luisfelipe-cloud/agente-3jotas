@@ -5,12 +5,14 @@
 //   GET /v2/chats/channel-account/{channelAccountId}     → chats de cada conta
 //   GET /v2/messages/chat/{chatId}                       → mensagens de cada chat
 //
-// Escopo: só o dia de hoje (00:00 UTC até agora) — não faz backfill de
-// histórico. Roda de novo a cada execução sobre a mesma janela; os upserts
-// são idempotentes (crm_conversa_id/crm_mensagem_id), então reprocessar o dia
-// não duplica nada. Ao final de cada conversa com mensagem nova, marca
-// `analises.status = pendente` para entrar na fila do motor de análise
-// (analysis-batch-submit).
+// Escopo: desde o início de ONTEM (00:00 UTC) até agora — não faz backfill
+// de histórico anterior a isso. A janela inclui o dia anterior de propósito
+// (ver comentário perto do cálculo do cursor): garante que nada se perde se
+// uma execução truncar perto da virada do dia. Roda de novo a cada execução
+// sobre a mesma janela; os upserts são idempotentes
+// (crm_conversa_id/crm_mensagem_id), então reprocessar não duplica nada. Ao
+// final de cada conversa com mensagem nova, marca `analises.status =
+// pendente` para entrar na fila do motor de análise (analysis-batch-submit).
 //
 // Disparo sugerido: pg_cron a cada N minutos, mesmo CRON_SECRET dos demais crons.
 
@@ -151,7 +153,7 @@ function createClintClient() {
   };
 }
 
-// Limite de segurança por execução — mesmo escopo sendo só "hoje", um dia
+// Limite de segurança por execução — mesmo escopo sendo só ontem+hoje, um dia
 // de pico pode ter muitos chats; corta aqui para não estourar o limite de
 // recursos da Edge Function (WORKER_RESOURCE_LIMIT). Se truncar, a próxima
 // execução (cron ou botão) reprocessa o dia inteiro de novo — inofensivo,
@@ -183,9 +185,18 @@ Deno.serve(async (req) => {
     return new Response(err instanceof Error ? err.message : String(err), { status: 500 });
   }
 
-  const inicioHoje = new Date();
-  inicioHoje.setUTCHours(0, 0, 0, 0);
-  const cursor = inicioHoje.toISOString();
+  // Janela = desde o início de ONTEM (não hoje) — se o cursor fosse sempre
+  // "hoje 00:00", uma execução que rodasse logo depois da virada do dia (ou
+  // que ainda estivesse truncando por WORKER_RESOURCE_LIMIT quando o dia
+  // virou) perderia pra sempre o que sobrou de ontem: o cursor pularia
+  // direto pro novo dia e ninguém nunca mais pediria esses chats de novo à
+  // Clint. Cobrindo ontem+hoje toda vez, qualquer trabalho que ficou pra
+  // trás é sempre retomado na próxima execução — o "skip já sincronizado"
+  // (ver dentro de sincronizarChat) garante que isso não sai caro.
+  const inicioOntem = new Date();
+  inicioOntem.setUTCDate(inicioOntem.getUTCDate() - 1);
+  inicioOntem.setUTCHours(0, 0, 0, 0);
+  const cursor = inicioOntem.toISOString();
 
   // Nome real do corretor (best-effort) — se a chamada falhar ou o corretor
   // não aparecer na primeira página, cai no placeholder de sempre em
@@ -325,16 +336,102 @@ async function sincronizarChat(
   }
 
   if (mensagensGravadas > 0) {
-    await atualizarHandoffIA(supabase, conversa.id);
-    await atualizarStatusAnalise(supabase, conversa.id);
+    const aindaCanonica = await consolidarPorLead(supabase, conversa.id, leadId, corretorId, chat.created_at);
+    // Se essa conversa acabou de ser consolidada em outra (deixou de ser a
+    // canônica do grupo), não mexe no status dela — senão sobrescreveria o
+    // 'consolidada' que consolidarPorLead acabou de gravar, reabrindo pra
+    // análise uma conversa que não deveria mais ser analisada isoladamente.
+    if (aindaCanonica) {
+      await atualizarHandoffIA(supabase, conversa.id);
+      await atualizarStatusAnalise(supabase, conversa.id);
+    }
   }
 
   return { mensagensGravadas };
 }
 
+// Clint fecha o chat e reabre com um crm_conversa_id novo quando o lead
+// manda mensagem depois de um tempo — sem isso, cada pedaço vira uma
+// análise isolada, perdendo o contexto da relação inteira com o lead.
+// Agrupa por (lead_id, corretor_id) dentro de uma janela de dias: a
+// conversa mais recente do grupo fica "canônica" (é a que segue sendo
+// analisada e contando no ranking); as demais apontam `substituida_por_id`
+// pra ela e ganham status 'consolidada' em `analises`.
+const JANELA_CONSOLIDACAO_DIAS = 120;
+
+// Retorna `false` quando a conversa passada acaba de ser consolidada em
+// outra (deixou de ser canônica) — quem chama usa isso pra não reabrir a
+// análise dela depois.
+async function consolidarPorLead(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  conversaId: string,
+  leadId: string,
+  corretorId: string,
+  iniciadaEm: string,
+): Promise<boolean> {
+  const { data: atual } = await supabase
+    .from("conversas")
+    .select("substituida_por_id")
+    .eq("id", conversaId)
+    .single();
+  if (atual?.substituida_por_id) return false; // já resolvida numa execução anterior
+
+  const inicioMs = new Date(iniciadaEm).getTime();
+  const janelaMs = JANELA_CONSOLIDACAO_DIAS * 24 * 60 * 60 * 1000;
+  const janelaInicio = new Date(inicioMs - janelaMs).toISOString();
+  const janelaFim = new Date(inicioMs + janelaMs).toISOString();
+
+  const { data: candidatas } = await supabase
+    .from("conversas")
+    .select("id, iniciada_em")
+    .eq("lead_id", leadId)
+    .eq("corretor_id", corretorId)
+    .is("substituida_por_id", null)
+    .neq("id", conversaId)
+    .gte("iniciada_em", janelaInicio)
+    .lte("iniciada_em", janelaFim);
+
+  if (!candidatas?.length) return true;
+
+  // Canônica = quem tem a mensagem mais recente de verdade, não quem foi
+  // "criada" por último — o Clint às vezes continua postando no chat_id
+  // antigo em vez de abrir um novo, então "iniciada_em" mais recente pode
+  // estar sem nenhuma mensagem enquanto a atividade real continua na mais
+  // antiga. Pega a última `enviada_em` de cada conversa do grupo (ordenado
+  // desc, primeira ocorrência por conversa já é a mais recente dela).
+  const grupoIds = [...candidatas.map((c: { id: string }) => c.id), conversaId];
+  const { data: ultimasMensagens } = await supabase
+    .from("mensagens")
+    .select("conversa_id, enviada_em")
+    .in("conversa_id", grupoIds)
+    .order("enviada_em", { ascending: false });
+
+  const ultimaAtividade = new Map<string, string>();
+  for (const m of ultimasMensagens ?? []) {
+    if (!ultimaAtividade.has(m.conversa_id)) ultimaAtividade.set(m.conversa_id, m.enviada_em);
+  }
+
+  const grupo = [...candidatas, { id: conversaId, iniciada_em: iniciadaEm }].sort((a, b) => {
+    const atividadeA = ultimaAtividade.get(a.id) ?? a.iniciada_em;
+    const atividadeB = ultimaAtividade.get(b.id) ?? b.iniciada_em;
+    return new Date(atividadeB).getTime() - new Date(atividadeA).getTime();
+  });
+  const canonicaId = grupo[0].id;
+
+  for (const antiga of grupo.slice(1)) {
+    await supabase.from("conversas").update({ substituida_por_id: canonicaId }).eq("id", antiga.id);
+    await supabase
+      .from("analises")
+      .upsert({ conversa_id: antiga.id, status: "consolidada" }, { onConflict: "conversa_id" });
+  }
+
+  return canonicaId === conversaId;
+}
+
 // Fallback só para mensagens sincronizadas antes deste campo existir (o
-// sync só cobre "hoje" — ver comentário no topo do arquivo — então
-// conversas de dias anteriores nunca vão ganhar `autor_crm_user_id`
+// sync só cobre ontem+hoje — ver comentário no topo do arquivo — então
+// conversas mais antigas nunca vão ganhar `autor_crm_user_id`
 // retroativamente). Detecta a mensagem-resumo que a IA de qualificação
 // manda antes de passar o lead pro corretor humano (algo como "Aqui está
 // um resumo das informações que você me passou... um dos nossos

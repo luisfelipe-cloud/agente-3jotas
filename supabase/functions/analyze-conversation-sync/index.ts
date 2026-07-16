@@ -64,6 +64,7 @@ interface Conversa {
   iniciada_em: string;
   finalizada_em: string | null;
   humano_assumiu_em: string | null;
+  substituida_por_id: string | null;
 }
 
 interface ParametroCriterio {
@@ -95,6 +96,46 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   envio_simulacao: "Envio de Simulação",
   resultado_analise: "Resultado de Análise",
 };
+
+// Clint fecha o chat e reabre com um crm_conversa_id novo quando o lead
+// escreve de novo depois de um tempo — sync-clint já agrupa essas conversas
+// por (lead_id, corretor_id) marcando `substituida_por_id` (ver
+// consolidarPorLead lá). Aqui juntamos as mensagens de TODAS as conversas do
+// grupo (a canônica + as que apontam pra ela) num único transcript, em vez
+// de avaliar cada pedaço isolado — é a relação inteira com o lead, não um
+// recorte arbitrário de um chat que o Clint decidiu reabrir.
+async function buscarMensagensDoGrupo(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  conversa: Conversa,
+): Promise<Mensagem[]> {
+  const canonicaId = conversa.substituida_por_id ?? conversa.id;
+
+  const { data: grupo } = await supabase
+    .from("conversas")
+    .select("id, humano_assumiu_em")
+    .or(`id.eq.${canonicaId},substituida_por_id.eq.${canonicaId}`);
+
+  const conversaIds = (grupo ?? []).map((c: { id: string }) => c.id);
+  const handoffPorConversa = new Map((grupo ?? []).map((c: { id: string; humano_assumiu_em: string | null }) => [c.id, c.humano_assumiu_em]));
+
+  const { data: todasMensagens } = await supabase
+    .from("mensagens")
+    .select("*")
+    .in("conversa_id", conversaIds)
+    .order("enviada_em", { ascending: true })
+    .returns<Mensagem[]>();
+
+  // Se um agente de IA qualificou o lead antes do corretor humano entrar,
+  // tudo até o handoff (`humano_assumiu_em`) fica de fora — não é atendimento
+  // do corretor. Cada conversa do grupo tem seu próprio handoff (um chat
+  // reaberto pelo Clint normalmente já começa direto com o corretor, sem
+  // fase de IA de novo).
+  return (todasMensagens ?? []).filter((m) => {
+    const handoff = handoffPorConversa.get(m.conversa_id);
+    return !handoff || m.enviada_em > handoff;
+  });
+}
 
 // Não tenta adivinhar em qual etapa a conversa está — o critério "playbook"
 // é avaliado de forma fria e agnóstica de etapa: a IA recebe TODOS os
@@ -279,23 +320,7 @@ Deno.serve(async (req) => {
     return new Response(`conversa não encontrada: ${conversaError?.message}`, { status: 404 });
   }
 
-  const { data: todasMensagens, error: mensagensError } = await supabase
-    .from("mensagens")
-    .select("*")
-    .eq("conversa_id", conversa_id)
-    .order("enviada_em", { ascending: true })
-    .returns<Mensagem[]>();
-
-  if (mensagensError || !todasMensagens?.length) {
-    return new Response(`sem mensagens para analisar: ${mensagensError?.message}`, { status: 422 });
-  }
-
-  // Se um agente de IA qualificou o lead antes do corretor humano entrar,
-  // tudo até o handoff (`humano_assumiu_em`) fica de fora — não é atendimento
-  // do corretor e não pode contar pra elegibilidade nem pra análise dele.
-  const mensagens = conversa.humano_assumiu_em
-    ? todasMensagens.filter((m) => m.enviada_em > conversa.humano_assumiu_em!)
-    : todasMensagens;
+  const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
 
   if (!mensagens.length) {
     await supabase.from("analises").upsert(

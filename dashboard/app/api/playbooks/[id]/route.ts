@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
 
-// PATCH — atualiza etapa/conteudo/ativo de um script. Se ativo=true, desativa
-// primeiro qualquer outro script ativo da mesma etapa antes de aplicar a
-// mudança (índice único parcial só permite um ativo por etapa).
+// PATCH — atualiza etapa/conteudo/ativo de um script. Vários podem estar
+// ativos ao mesmo tempo (inclusive da mesma etapa) — não desativa mais os
+// demais ao ativar um.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await req.json();
@@ -17,24 +17,6 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
   if (!Object.keys(patch).length) {
     return NextResponse.json({ ok: false, erro: "nada para atualizar" }, { status: 400 });
-  }
-
-  if (patch.ativo === true) {
-    const { data: atual, error: buscaError } = await supabase.from("playbooks").select("etapa").eq("id", id).single();
-    if (buscaError || !atual) {
-      return NextResponse.json({ ok: false, erro: buscaError?.message ?? "playbook não encontrado" }, { status: 404 });
-    }
-
-    const etapaAlvo = (patch.etapa as string | undefined) ?? atual.etapa;
-    const { error: desativarError } = await supabase
-      .from("playbooks")
-      .update({ ativo: false })
-      .eq("etapa", etapaAlvo)
-      .eq("ativo", true)
-      .neq("id", id);
-    if (desativarError) {
-      return NextResponse.json({ ok: false, erro: desativarError.message }, { status: 500 });
-    }
   }
 
   const { error } = await supabase.from("playbooks").update(patch).eq("id", id);
