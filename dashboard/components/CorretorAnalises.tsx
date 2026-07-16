@@ -19,14 +19,7 @@ function scoreColor(score: number) {
 }
 
 function motivoNaoAnalisada(c: ConversaAnalisada): string {
-  const motivos: string[] = [];
-  if (c.totalMensagens < 3) {
-    motivos.push(`${c.totalMensagens} mensagem${c.totalMensagens === 1 ? "" : "s"} no total (mín. 3)`);
-  }
-  if (c.mensagensDoLead < 2) {
-    motivos.push(`${c.mensagensDoLead} do lead (mín. 2)`);
-  }
-  return motivos.length ? motivos.join(" · ") : "Aguardando mais interação.";
+  return c.totalMensagens === 0 ? "Ainda sem mensagem do corretor." : "Aguardando processamento.";
 }
 
 interface InsightCorretor {

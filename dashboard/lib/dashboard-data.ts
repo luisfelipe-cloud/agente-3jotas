@@ -22,26 +22,51 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
   const doisDiasAtras = new Date(hoje);
   doisDiasAtras.setDate(doisDiasAtras.getDate() - 2);
 
+  // Um dia de atividade normal já passa de 1000 mensagens — buscar as linhas
+  // cruas (só pra contar por dia depois) batia no limite padrão de 1000
+  // linhas do Supabase/PostgREST sem erro nenhum, e como a ordem retornada
+  // não é cronológica, os dias mais recentes (hoje, ontem) simplesmente
+  // desapareciam do gráfico de interações. Conta direto no banco por dia
+  // (count exact/head, sem transferir linha nenhuma) em vez de trazer tudo
+  // pro JS e filtrar aqui.
+  const diasJanela: { inicio: Date; fim: Date }[] = [];
+  for (let i = 6; i >= 0; i--) {
+    const inicio = new Date(hoje);
+    inicio.setDate(inicio.getDate() - i);
+    const fim = new Date(inicio);
+    fim.setDate(fim.getDate() + 1);
+    diasJanela.push({ inicio, fim });
+  }
+
   const [
     { count: conversasPendentesAnalise, error: pendentesError },
     { data: analisesQuinzenaRaw, error: analisesError },
-    { data: mensagens7diasRaw, error: mensagensError },
+    contagensMensagensPorDia,
   ] = await Promise.all([
     supabase.from("analises").select("id", { count: "exact", head: true }).eq("status", "pendente"),
     supabase
       .from("analises")
       .select("*, conversas(corretor_id, corretores(nome_crm))")
       .eq("status", "concluida")
-      .gte("analisado_em", quinzeDiasAtras.toISOString()),
-    supabase.from("mensagens").select("enviada_em").gte("enviada_em", seteDiasAtras.toISOString()),
+      .gte("analisado_em", quinzeDiasAtras.toISOString())
+      .limit(5000),
+    Promise.all(
+      diasJanela.map(({ inicio, fim }) =>
+        supabase
+          .from("mensagens")
+          .select("id", { count: "exact", head: true })
+          .gte("enviada_em", inicio.toISOString())
+          .lt("enviada_em", fim.toISOString()),
+      ),
+    ),
   ]);
 
   if (pendentesError) throw new Error(`Erro ao carregar dashboard: ${pendentesError.message}`);
   if (analisesError) throw new Error(`Erro ao carregar dashboard: ${analisesError.message}`);
-  if (mensagensError) throw new Error(`Erro ao carregar dashboard: ${mensagensError.message}`);
+  const erroContagem = contagensMensagensPorDia.find((r) => r.error);
+  if (erroContagem?.error) throw new Error(`Erro ao carregar dashboard: ${erroContagem.error.message}`);
 
   const analises = analisesQuinzenaRaw ?? [];
-  const mensagens7dias = mensagens7diasRaw ?? [];
 
   const scoreDe = (a: (typeof analises)[number], c: CriterioKey): number | null => {
     const v = a[`${c}_score`];
@@ -120,18 +145,7 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
     });
 
   const analises7dias = analises.filter((a) => a.analisado_em && new Date(a.analisado_em) >= seteDiasAtras);
-  const tendenciaDiaria: DashboardOverview["tendenciaDiaria"] = [];
-  for (let i = 6; i >= 0; i--) {
-    const inicio = new Date(hoje);
-    inicio.setDate(inicio.getDate() - i);
-    const fim = new Date(inicio);
-    fim.setDate(fim.getDate() + 1);
-
-    const interacoesDia = mensagens7dias.filter((m) => {
-      const t = new Date(m.enviada_em).getTime();
-      return t >= inicio.getTime() && t < fim.getTime();
-    }).length;
-
+  const tendenciaDiaria: DashboardOverview["tendenciaDiaria"] = diasJanela.map(({ inicio, fim }, i) => {
     const scoresDia = analises7dias
       .filter((a) => {
         const t = new Date(a.analisado_em).getTime();
@@ -139,12 +153,12 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
       })
       .flatMap((a) => CRITERIOS.map((c) => scoreDe(a, c)).filter((v): v is number => v !== null));
 
-    tendenciaDiaria.push({
+    return {
       data: inicio.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
-      interacoes: interacoesDia,
+      interacoes: contagensMensagensPorDia[i].count ?? 0,
       mediaScore: scoresDia.length ? scoresDia.reduce((x, y) => x + y, 0) / scoresDia.length : 0,
-    });
-  }
+    };
+  });
 
   const variacaoChatsAnalisadosPercentual = analisesOntem.length
     ? Math.round(((analisesHoje.length - analisesOntem.length) / analisesOntem.length) * 100)

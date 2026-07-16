@@ -322,26 +322,15 @@ Deno.serve(async (req) => {
 
   const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
 
+  // Elegibilidade: basta ter pelo menos 1 mensagem depois do handoff da IA —
+  // mesmo só o corretor tendo escrito (abertura/follow-up ainda sem
+  // resposta do lead) já é atendimento real e deve ser avaliado.
   if (!mensagens.length) {
     await supabase.from("analises").upsert(
       { conversa_id, status: "nao_elegivel" },
       { onConflict: "conversa_id" },
     );
     return new Response("sem mensagens após o handoff da IA para o corretor humano", { status: 422 });
-  }
-
-  // Regra de elegibilidade: 3+ mensagens no total, sendo 2+ do lead — senão
-  // não vale a pena mandar pra IA ainda.
-  const mensagensDoLead = mensagens.filter((m) => m.remetente === "lead").length;
-  if (mensagens.length < 3 || mensagensDoLead < 2) {
-    await supabase.from("analises").upsert(
-      { conversa_id, status: "nao_elegivel" },
-      { onConflict: "conversa_id" },
-    );
-    return new Response(
-      `conversa não elegível para análise ainda: ${mensagens.length} mensagens (mín. 3), ${mensagensDoLead} do lead (mín. 2)`,
-      { status: 422 },
-    );
   }
 
   await supabase.from("analises").upsert(
