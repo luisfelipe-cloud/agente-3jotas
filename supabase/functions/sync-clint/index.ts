@@ -14,10 +14,14 @@
 // final de cada conversa com mensagem nova, marca `analises.status =
 // pendente` para entrar na fila do motor de análise (analysis-batch-submit).
 //
+// Mídia (áudio/imagem/documento) NÃO é descrita aqui — só grava um
+// placeholder e marca `midia_descrita = false` (ver montarCamposMensagem);
+// quem descreve de fato é a function processar-midia-pendente, em lotes
+// pequenos e separados, pra não competir pelo orçamento de tempo deste sync.
+//
 // Disparo sugerido: pg_cron a cada N minutos, mesmo CRON_SECRET dos demais crons.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { encodeBase64 } from "jsr:@std/encoding@1/base64";
 
 // Arquivo único e autocontido (sem pasta _shared) para colar direto no editor
 // do dashboard do Supabase.
@@ -63,6 +67,9 @@ interface ClintMessage {
   type: "USER" | "CUSTOMER" | "EVENT" | "NOTE";
   content_type: string;
   content_url: string | null;
+  // Só vem preenchido pra content_type=DOCUMENT (mimeType real do arquivo —
+  // pode ser um PDF de verdade ou uma imagem mandada "como documento").
+  content_object: { name?: string; mimeType?: string } | null;
   // Vem `null` quando quem escreveu foi a IA de qualificação (ela não usa
   // uma conta própria no Clint) e com o crm_id do corretor quando foi um
   // humano — é o sinal estruturado que usamos pra achar o handoff, em vez
@@ -158,10 +165,12 @@ function createClintClient() {
 // recursos da Edge Function (WORKER_RESOURCE_LIMIT). Se truncar, a próxima
 // execução (cron ou botão) reprocessa o dia inteiro de novo — inofensivo,
 // os upserts são idempotentes por crm_conversa_id/crm_mensagem_id.
-// Baixado de 100 pra 20 depois que a transcrição de áudio (download +
-// base64 + chamada Gemini por áudio, dentro do loop de mensagens) passou a
-// estourar esse limite com muita frequência — cada chat com vários áudios
-// pesa bem mais do que um chat só de texto.
+// Baixado de 100 pra 20 quando a descrição de mídia (download + base64 +
+// chamada Gemini por áudio/imagem/documento) ainda rodava dentro deste loop
+// e estourava esse limite com frequência. Essa parte foi movida pra
+// processar-midia-pendente (function separada) — o sync voltou a ser leve,
+// então esse valor provavelmente pode subir de novo; não subimos ainda por
+// falta de validação em produção.
 const MAX_CHATS_POR_EXECUCAO = 20;
 
 // Teto de quantos chats a função examina no total (incluindo os já
@@ -320,14 +329,20 @@ async function sincronizarChat(
     const remetente = mapearRemetente(msg.type);
     if (!remetente) continue; // EVENT/NOTE não são mensagens de conversa
 
+    const campos = montarCamposMensagem(msg, remetente);
     const { error } = await supabase.from("mensagens").upsert(
       {
         crm_mensagem_id: msg.id,
         conversa_id: conversa.id,
         remetente,
-        texto: await textoMensagem(msg, remetente),
+        texto: campos.texto,
         enviada_em: msg.created_at,
         autor_crm_user_id: remetente === "corretor" ? msg.user_id : null,
+        midia_content_type: campos.midiaContentType,
+        midia_content_url: campos.midiaContentUrl,
+        midia_mime_type: campos.midiaMimeType,
+        midia_nome: campos.midiaNome,
+        midia_descrita: campos.midiaDescrita,
       },
       { onConflict: "crm_mensagem_id" },
     );
@@ -543,53 +558,28 @@ function mapearRemetente(tipo: ClintMessage["type"]): "corretor" | "lead" | null
   return null;
 }
 
-// Baixa o áudio (mesmo `api-token` usado nas outras chamadas ao Clint) e
-// pede pro Gemini transcrever literalmente — feito uma vez na ingestão, não
-// a cada análise, então o resto do pipeline (analyze-conversation-sync,
-// review, dashboard) nem precisa saber que a mensagem começou como áudio.
-// Falha (rede, Gemini fora, áudio corrompido) não derruba a sincronização —
-// cai no placeholder "[Áudio enviado]" e a próxima sincronização não tenta
-// de novo (a mensagem já foi gravada com o placeholder), mas isso é raro o
-// bastante pra não valer a pena um retry dedicado agora.
-async function transcreverAudio(contentUrl: string): Promise<string | null> {
-  const clintApiKey = Deno.env.get("CLINT_API_KEY");
-  const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
-  if (!clintApiKey || !geminiApiKey) return null;
+// Imagem sempre vem como jpeg/png na prática (WhatsApp comprime pra isso);
+// tenta inferir pela extensão do content_url, mas cai em jpeg por padrão.
+// Usado tanto aqui (pra gravar midia_mime_type) quanto em
+// processar-midia-pendente (pra montar a chamada Gemini).
+function inferirMimeImagem(contentUrl: string): string {
+  if (contentUrl.toLowerCase().endsWith(".png")) return "image/png";
+  if (contentUrl.toLowerCase().endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
+}
 
-  try {
-    const audioResp = await fetch(contentUrl, { headers: { "api-token": clintApiKey } });
-    if (!audioResp.ok) return null;
+// Só os formatos que o Gemini processa bem via inline_data — outros tipos
+// de documento (docx, xlsx etc.) caem no placeholder genérico sem entrar na
+// fila de processamento de mídia.
+const MIME_DOCUMENTO_SUPORTADO = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp", "text/plain"]);
 
-    const audioBase64 = encodeBase64(await audioResp.arrayBuffer());
-
-    const resp = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiApiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [
-                {
-                  text: 'Transcreva literalmente o que é dito neste áudio, em português. Só a transcrição, nada mais. Se não der pra entender, responda apenas "[áudio inaudível]".',
-                },
-                { inline_data: { mime_type: "audio/ogg", data: audioBase64 } },
-              ],
-            },
-          ],
-        }),
-      },
-    );
-    if (!resp.ok) return null;
-
-    const data = await resp.json();
-    const texto = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-    return texto || null;
-  } catch {
-    return null;
-  }
+interface CamposMidia {
+  texto: string;
+  midiaContentType: string | null;
+  midiaContentUrl: string | null;
+  midiaMimeType: string | null;
+  midiaNome: string | null;
+  midiaDescrita: boolean;
 }
 
 // `mensagens.texto` é NOT NULL, mas nem toda mensagem do Clint tem `content`
@@ -599,39 +589,85 @@ async function transcreverAudio(contentUrl: string): Promise<string | null> {
 // CALL_MISSED_VOICE em especial vira uma evidência real e estruturada pro
 // critério "fluxo" (tentativa de contato por ligação), em vez de precisar
 // adivinhar pelo tom da mensagem seguinte.
-async function textoMensagem(msg: ClintMessage, remetente: "corretor" | "lead"): Promise<string> {
-  if (msg.content) return msg.content;
+//
+// Áudio/imagem/documento NÃO são descritos aqui — isso exigiria uma chamada
+// Gemini síncrona por mensagem dentro do loop de sincronização, e cada uma
+// soma ao tempo de execução até estourar o WORKER_RESOURCE_LIMIT da Edge
+// Function (era o caso já só com áudio). Em vez disso, grava um placeholder
+// na hora e marca `midia_descrita = false`: a function
+// processar-midia-pendente (cron próprio, mais frequente e em lotes
+// pequenos) descreve depois, sem competir pelo orçamento de tempo do sync.
+function montarCamposMensagem(msg: ClintMessage, remetente: "corretor" | "lead"): CamposMidia {
+  if (msg.content) {
+    return { texto: msg.content, midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
+  }
 
   if (msg.content_type === "AUDIO" && msg.content_url) {
-    const transcrito = await transcreverAudio(msg.content_url);
-    if (transcrito) return `[Áudio transcrito] ${transcrito}`;
+    return {
+      texto: "[Áudio recebido — transcrição pendente]",
+      midiaContentType: "AUDIO",
+      midiaContentUrl: msg.content_url,
+      midiaMimeType: "audio/ogg",
+      midiaNome: null,
+      midiaDescrita: false,
+    };
   }
 
-  switch (msg.content_type) {
-    case "CALL_MISSED_VOICE":
-      return remetente === "lead"
-        ? "[Ligação de voz do lead não atendida pelo corretor]"
-        : "[Ligação de voz do corretor não atendida pelo lead]";
-    case "IMAGE":
-      return "[Imagem enviada, sem legenda]";
-    case "AUDIO":
-      return "[Áudio enviado — não foi possível transcrever]";
-    case "VIDEO":
-      return "[Vídeo enviado, sem legenda]";
-    case "DOCUMENT":
-      return "[Documento enviado]";
-    case "STICKER":
-      return "[Figurinha enviada]";
-    case "LOCATION":
-      return "[Localização compartilhada]";
-    case "CONTACT":
-    case "CONTACT_ARRAY":
-      return "[Contato compartilhado]";
-    case "REACTION":
-      return "[Reação a uma mensagem]";
-    default:
-      return `[Conteúdo sem texto: ${msg.content_type}]`;
+  if (msg.content_type === "IMAGE" && msg.content_url) {
+    return {
+      texto: "[Imagem recebida — descrição pendente]",
+      midiaContentType: "IMAGE",
+      midiaContentUrl: msg.content_url,
+      midiaMimeType: inferirMimeImagem(msg.content_url),
+      midiaNome: null,
+      midiaDescrita: false,
+    };
   }
+
+  if (msg.content_type === "DOCUMENT" && msg.content_url) {
+    const mimeType = msg.content_object?.mimeType;
+    if (mimeType && MIME_DOCUMENTO_SUPORTADO.has(mimeType)) {
+      const nome = msg.content_object?.name ?? null;
+      return {
+        texto: `[Documento${nome ? ` "${nome}"` : ""} recebido — resumo pendente]`,
+        midiaContentType: "DOCUMENT",
+        midiaContentUrl: msg.content_url,
+        midiaMimeType: mimeType,
+        midiaNome: nome,
+        midiaDescrita: false,
+      };
+    }
+  }
+
+  const texto = (() => {
+    switch (msg.content_type) {
+      case "CALL_MISSED_VOICE":
+        return remetente === "lead"
+          ? "[Ligação de voz do lead não atendida pelo corretor]"
+          : "[Ligação de voz do corretor não atendida pelo lead]";
+      case "IMAGE":
+        return "[Imagem enviada — formato não suportado]";
+      case "AUDIO":
+        return "[Áudio enviado — sem URL de conteúdo]";
+      case "VIDEO":
+        return "[Vídeo enviado, sem legenda]";
+      case "DOCUMENT":
+        return "[Documento enviado — formato não suportado]";
+      case "STICKER":
+        return "[Figurinha enviada]";
+      case "LOCATION":
+        return "[Localização compartilhada]";
+      case "CONTACT":
+      case "CONTACT_ARRAY":
+        return "[Contato compartilhado]";
+      case "REACTION":
+        return "[Reação a uma mensagem]";
+      default:
+        return `[Conteúdo sem texto: ${msg.content_type}]`;
+    }
+  })();
+
+  return { texto, midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
 }
 
 // `ignoreDuplicates: true` faz o nome real só ser gravado na CRIAÇÃO do
