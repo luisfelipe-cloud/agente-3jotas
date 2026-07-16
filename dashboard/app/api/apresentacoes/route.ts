@@ -37,6 +37,7 @@ export async function POST(req: Request) {
     dataFim?: string;
     mediasPorCriterio?: Record<CriterioKey, number>;
     conversas?: {
+      conversaId: string;
       leadNome: string;
       leadTelefone: string | null;
       iniciadaEm: string;
@@ -55,7 +56,7 @@ export async function POST(req: Request) {
     }
   }
 
-  const html = montarApresentacaoHtml({ corretorNome, dataInicio, dataFim, mediasPorCriterio, conversas, insight: insight ?? null });
+  const html = montarApresentacaoHtml({ corretorId, corretorNome, dataInicio, dataFim, mediasPorCriterio, conversas, insight: insight ?? null });
   const titulo = `${dataInicio.split("-").reverse().join("/")} a ${dataFim.split("-").reverse().join("/")}`;
 
   const supabase = createServiceClient();

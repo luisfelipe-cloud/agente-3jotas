@@ -7,6 +7,22 @@ function inicioDia(data: Date) {
   return d;
 }
 
+// O dashboard dispara várias chamadas em paralelo pro Supabase (7 só pra
+// clientes_ativos_no_periodo) — sob instabilidade de rede transitória
+// (ETIMEDOUT etc), basta uma falhar pra derrubar a página inteira. Retry
+// com backoff curto absorve esses casos sem mascarar um erro de verdade
+// (schema errado, função inexistente) — esses continuam falhando nas 3
+// tentativas e sobem normalmente.
+async function comRetry<T extends { error: unknown }>(chamar: () => PromiseLike<T>, tentativas = 3): Promise<T> {
+  let ultimoResultado: T;
+  for (let i = 0; i < tentativas; i++) {
+    ultimoResultado = await chamar();
+    if (!ultimoResultado.error) return ultimoResultado;
+    if (i < tentativas - 1) await new Promise((resolve) => setTimeout(resolve, 300 * (i + 1)));
+  }
+  return ultimoResultado!;
+}
+
 export async function buscarDashboardOverview(): Promise<DashboardOverview> {
   const supabase = createServiceClient();
 
@@ -22,13 +38,14 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
   const doisDiasAtras = new Date(hoje);
   doisDiasAtras.setDate(doisDiasAtras.getDate() - 2);
 
-  // Um dia de atividade normal já passa de 1000 mensagens — buscar as linhas
-  // cruas (só pra contar por dia depois) batia no limite padrão de 1000
-  // linhas do Supabase/PostgREST sem erro nenhum, e como a ordem retornada
-  // não é cronológica, os dias mais recentes (hoje, ontem) simplesmente
-  // desapareciam do gráfico de interações. Conta direto no banco por dia
-  // (count exact/head, sem transferir linha nenhuma) em vez de trazer tudo
-  // pro JS e filtrar aqui.
+  // Um dia de atividade normal já passa de 1000 mensagens — buscar linhas
+  // cruas (mesmo só pra contar depois) batia no limite padrão de 1000 linhas
+  // do Supabase/PostgREST sem erro nenhum, e como a ordem retornada não é
+  // cronológica, os dias mais recentes (hoje, ontem) simplesmente
+  // desapareciam do gráfico. Conta direto no banco por dia — clientes
+  // (`clientes_ativos_no_periodo`, distinct lead_id, precisa de função SQL
+  // porque PostgREST não faz count distinct) — sem transferir linha nenhuma
+  // pro JS.
   const diasJanela: { inicio: Date; fim: Date }[] = [];
   for (let i = 6; i >= 0; i--) {
     const inicio = new Date(hoje);
@@ -41,30 +58,40 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
   const [
     { count: conversasPendentesAnalise, error: pendentesError },
     { data: analisesQuinzenaRaw, error: analisesError },
-    contagensMensagensPorDia,
+    contagensClientesPorDia,
   ] = await Promise.all([
-    supabase.from("analises").select("id", { count: "exact", head: true }).eq("status", "pendente"),
-    supabase
-      .from("analises")
-      .select("*, conversas(corretor_id, corretores(nome_crm))")
-      .eq("status", "concluida")
-      .gte("analisado_em", quinzeDiasAtras.toISOString())
-      .limit(5000),
+    comRetry(() => supabase.from("analises").select("id", { count: "exact", head: true }).eq("status", "pendente")),
+    comRetry(() =>
+      supabase
+        .from("analises")
+        .select("*, conversas(corretor_id, corretores(nome_crm))")
+        .eq("status", "concluida")
+        .gte("analisado_em", quinzeDiasAtras.toISOString())
+        .limit(5000),
+    ),
     Promise.all(
       diasJanela.map(({ inicio, fim }) =>
-        supabase
-          .from("mensagens")
-          .select("id", { count: "exact", head: true })
-          .gte("enviada_em", inicio.toISOString())
-          .lt("enviada_em", fim.toISOString()),
+        comRetry(() =>
+          supabase.rpc("clientes_ativos_no_periodo", {
+            data_inicio: inicio.toISOString(),
+            data_fim: fim.toISOString(),
+          }),
+        ),
       ),
     ),
   ]);
 
   if (pendentesError) throw new Error(`Erro ao carregar dashboard: ${pendentesError.message}`);
   if (analisesError) throw new Error(`Erro ao carregar dashboard: ${analisesError.message}`);
-  const erroContagem = contagensMensagensPorDia.find((r) => r.error);
-  if (erroContagem?.error) throw new Error(`Erro ao carregar dashboard: ${erroContagem.error.message}`);
+
+  // Diferente das duas queries acima (que sustentam vários cards e por isso
+  // sobem erro de verdade se falharem mesmo após retry): um dia isolado do
+  // gráfico de tendência não vale derrubar o dashboard inteiro por causa de
+  // instabilidade de rede transitória — loga o aviso e segue com 0 nesse
+  // ponto específico.
+  for (const [i, r] of contagensClientesPorDia.entries()) {
+    if (r.error) console.warn(`clientes_ativos_no_periodo falhou pro dia ${diasJanela[i].inicio.toISOString().slice(0, 10)}: ${r.error.message}`);
+  }
 
   const analises = analisesQuinzenaRaw ?? [];
 
@@ -155,7 +182,7 @@ export async function buscarDashboardOverview(): Promise<DashboardOverview> {
 
     return {
       data: inicio.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }),
-      interacoes: contagensMensagensPorDia[i].count ?? 0,
+      clientes: Number(contagensClientesPorDia[i].data ?? 0),
       mediaScore: scoresDia.length ? scoresDia.reduce((x, y) => x + y, 0) / scoresDia.length : 0,
     };
   });

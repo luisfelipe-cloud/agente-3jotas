@@ -44,7 +44,7 @@ export default async function DashboardPage() {
       </Card>
 
       <Card>
-        <p className="text-sm font-semibold text-navy-900 mb-4">Interações e média de score por dia</p>
+        <p className="text-sm font-semibold text-navy-900 mb-4">Clientes e média de score por dia</p>
         <TendenciaChart dados={d.tendenciaDiaria} />
       </Card>
 

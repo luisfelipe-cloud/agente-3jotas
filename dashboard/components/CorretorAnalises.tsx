@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { CRITERIOS, CRITERIO_LABEL, ETAPA_LABEL, type ApresentacaoResumo, type ConversaAnalisada, type CriterioKey } from "@/lib/types";
 import { mapApresentacaoResumo } from "@/lib/mappers";
 import { Card } from "@/components/ui/Card";
@@ -46,6 +46,10 @@ export function CorretorAnalises({
   filtro?: ReactNode;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Link "abrir conversa" da apresentação em HTML (lib/presentation.ts) usa
+  // ?conversa={id} — abre direto o chat daquela conversa ao chegar aqui.
+  const conversaParaAbrir = searchParams.get("conversa");
   const [secao, setSecao] = useState<"conversas" | "apresentacoes">("conversas");
   const [filtroConversas, setFiltroConversas] = useState<"analisadas" | "nao_analisadas">("analisadas");
   const [apresentacoes, setApresentacoes] = useState(apresentacoesIniciais);
@@ -83,6 +87,7 @@ export function CorretorAnalises({
           mediasPorCriterio,
           insight: insight?.texto ?? null,
           conversas: concluidas.map((c) => ({
+            conversaId: c.conversaId,
             leadNome: c.leadNome,
             leadTelefone: c.leadTelefone,
             iniciadaEm: c.iniciadaEm,
@@ -211,7 +216,12 @@ export function CorretorAnalises({
               <>
                 {conversasAnalisadas.length === 0 && <p className="text-sm text-text-secondary">Nenhuma conversa neste período.</p>}
                 {conversasAnalisadas.map((conversa) => (
-                  <ConversaCard key={conversa.conversaId} conversa={conversa} corretorNome={corretorNome} />
+                  <ConversaCard
+                    key={conversa.conversaId}
+                    conversa={conversa}
+                    corretorNome={corretorNome}
+                    abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
+                  />
                 ))}
               </>
             ) : (
@@ -304,9 +314,30 @@ const STATUS_LABEL: Record<ConversaAnalisada["status"], string> = {
   consolidada: "Consolidada em outra conversa",
 };
 
-function ConversaCard({ conversa, corretorNome }: { conversa: ConversaAnalisada; corretorNome: string }) {
-  const [aberto, setAberto] = useState(false);
-  const [chatAberto, setChatAberto] = useState(false);
+function ConversaCard({
+  conversa,
+  corretorNome,
+  abrirAutomaticamente,
+}: {
+  conversa: ConversaAnalisada;
+  corretorNome: string;
+  abrirAutomaticamente?: boolean;
+}) {
+  const [aberto, setAberto] = useState(!!abrirAutomaticamente);
+  const [chatAberto, setChatAberto] = useState(!!abrirAutomaticamente);
+
+  // Link "abrir conversa" (da apresentação em HTML) navega com ?conversa={id}
+  // — como o componente já existe montado com esse id na primeira renderização
+  // (não é uma troca de rota client-side depois), o useState acima já cobre a
+  // maioria dos casos, mas o efeito garante mesmo se abrirAutomaticamente
+  // chegar depois (ex: searchParams resolvendo async).
+  useEffect(() => {
+    if (abrirAutomaticamente) {
+      setAberto(true);
+      setChatAberto(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [abrirAutomaticamente]);
   const analisada = conversa.status === "concluida";
   const criteriosComProblema = analisada ? CRITERIOS.filter((c) => conversa.criterios[c].score < 7.5) : [];
 

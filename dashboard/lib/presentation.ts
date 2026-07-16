@@ -9,6 +9,7 @@ interface CriterioResumo {
 }
 
 interface ConversaResumo {
+  conversaId: string;
   leadNome: string;
   leadTelefone: string | null;
   iniciadaEm: string;
@@ -16,6 +17,7 @@ interface ConversaResumo {
 }
 
 export interface DadosApresentacao {
+  corretorId: string;
   corretorNome: string;
   dataInicio: string;
   dataFim: string;
@@ -70,8 +72,13 @@ function cabecalho(kicker: string, titulo: string): string {
 // um "canvas" de largura fixa centralizado em todo slide (mesma largura em
 // todos, pra dar sensação de alinhamento consistente entre eles).
 export function montarApresentacaoHtml(dados: DadosApresentacao): string {
-  const { corretorNome, dataInicio, dataFim, mediasPorCriterio, conversas, insight } = dados;
+  const { corretorId, corretorNome, dataInicio, dataFim, mediasPorCriterio, conversas, insight } = dados;
   const logo = logoBase64();
+
+  // Link "abrir conversa" — a apresentação é servida em /api/apresentacoes/{id}
+  // (mesma origem do dashboard), então um caminho relativo já resolve certo.
+  // A página do corretor lê ?conversa= e abre o chat daquela conversa sozinha.
+  const linkConversa = (conversaId: string) => `/corretores/${corretorId}?conversa=${conversaId}`;
 
   const mediaGeral = CRITERIOS.reduce((soma, c) => soma + mediasPorCriterio[c], 0) / CRITERIOS.length;
 
@@ -91,6 +98,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   const erros = conversas
     .flatMap((c) =>
       CRITERIOS.filter((k) => c.criterios[k].score < LIMIAR_ERRO).map((k) => ({
+        conversaId: c.conversaId,
         leadNome: c.leadNome,
         leadTelefone: c.leadTelefone,
         criterio: k,
@@ -108,7 +116,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
       <div class="callout callout-erro">
         <div class="callout-topo">
           <span class="callout-tag tag-erro">${CRITERIO_LABEL[e.criterio]}</span>
-          <span class="callout-lead">${escapeHtml(e.leadNome)}${e.leadTelefone ? ` · ${escapeHtml(e.leadTelefone)}` : ""}</span>
+          <a class="callout-lead" href="${linkConversa(e.conversaId)}" target="_blank" rel="noopener">${escapeHtml(e.leadNome)}${e.leadTelefone ? ` · ${escapeHtml(e.leadTelefone)}` : ""}</a>
         </div>
         ${e.evidencia ? `<p class="callout-evidencia">&ldquo;${escapeHtml(e.evidencia)}&rdquo;</p>` : ""}
         <p class="callout-texto">${escapeHtml(e.justificativa || "Critério não atendido.")}</p>
@@ -123,12 +131,13 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
         (k) =>
           `<span class="ponto" title="${CRITERIO_LABEL[k]}: ${c.criterios[k].score.toFixed(1)}" style="background:${corDoScore(c.criterios[k].score)}"></span>`,
       ).join("");
+      const href = linkConversa(c.conversaId);
       return `
         <tr>
-          <td>${escapeHtml(c.leadNome)}${c.leadTelefone ? `<span class="lead-telefone"> · ${escapeHtml(c.leadTelefone)}</span>` : ""}</td>
+          <td><a class="linha-lead" href="${href}" target="_blank" rel="noopener">${escapeHtml(c.leadNome)}${c.leadTelefone ? `<span class="lead-telefone"> · ${escapeHtml(c.leadTelefone)}</span>` : ""}</a></td>
           <td>${new Date(c.iniciadaEm).toLocaleDateString("pt-BR")}</td>
           <td class="pontos-cel">${pontos}</td>
-          <td style="color:${corDoScore(media)};font-weight:700">${media.toFixed(1)}</td>
+          <td><a class="linha-nota" href="${href}" target="_blank" rel="noopener" style="color:${corDoScore(media)}">${media.toFixed(1)}</a></td>
         </tr>`;
     })
     .join("");
@@ -194,10 +203,15 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
         ${cabecalho("04 · Detalhamento", "Conversas analisadas")}
         ${
           conversas.length
-            ? `<table class="tabela">
-                <thead><tr><th>Lead</th><th>Data</th><th>Critérios</th><th>Nota</th></tr></thead>
-                <tbody>${linhasConversas}</tbody>
-              </table>`
+            ? `<div class="tabela-scroll">
+                <table class="tabela">
+                  <colgroup>
+                    <col class="col-lead" /><col class="col-data" /><col class="col-criterios" /><col class="col-nota" />
+                  </colgroup>
+                  <thead><tr><th>Lead</th><th>Data</th><th>Critérios</th><th>Nota</th></tr></thead>
+                  <tbody>${linhasConversas}</tbody>
+                </table>
+              </div>`
             : `<p class="legenda">Nenhuma conversa concluída neste período.</p>`
         }
       </div>
@@ -256,11 +270,22 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   .barra-trilho { height: 5px; border-radius: 999px; background: #eef1f4; overflow: hidden; }
   .barra-fill { height: 100%; border-radius: 999px; }
 
-  .tabela { width: 100%; border-collapse: collapse; font-size: 13px; }
-  .tabela th { text-align: left; color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px; padding: 0 12px 10px; border-bottom: 1px solid var(--line); font-weight: 700; }
-  .tabela td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; }
-  .lead-telefone { color: var(--muted); font-weight: 400; }
+  .tabela-scroll { max-height: 58vh; overflow: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .tabela { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13px; }
+  .tabela col.col-lead { width: 46%; }
+  .tabela col.col-data { width: 16%; }
+  .tabela col.col-criterios { width: 22%; }
+  .tabela col.col-nota { width: 16%; }
+  .tabela th { position: sticky; top: 0; text-align: left; color: var(--muted); text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px; padding: 12px; background: white; border-bottom: 1px solid var(--line); font-weight: 700; }
+  .tabela td { padding: 12px; border-bottom: 1px solid var(--line); color: var(--ink); text-align: left; overflow: hidden; }
+  .tabela td:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tabela tbody tr:last-child td { border-bottom: none; }
+  .tabela tbody tr:hover td { background: #f8fafc; }
+  .lead-telefone { color: var(--muted); font-weight: 400; }
+  .linha-lead, .linha-nota { color: inherit; text-decoration: none; }
+  .linha-lead { display: block; overflow: hidden; text-overflow: ellipsis; }
+  .linha-lead:hover, .linha-nota:hover { text-decoration: underline; }
+  .linha-nota { font-weight: 700; }
   .pontos-cel { display: flex; gap: 4px; }
   .ponto { display: inline-block; width: 7px; height: 7px; border-radius: 999px; }
 
@@ -272,7 +297,8 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   .callout-tag { display: inline-block; font-size: 9.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; padding: 3px 8px; border-radius: 999px; }
   .tag-erro { background: #fdeaea; color: var(--error); }
   .tag-insight { background: #fff0ef; color: var(--coral); margin-bottom: 12px; }
-  .callout-lead { font-size: 11.5px; font-weight: 600; color: #94a3b8; }
+  .callout-lead { font-size: 11.5px; font-weight: 600; color: #94a3b8; text-decoration: none; }
+  .callout-lead:hover { text-decoration: underline; }
   .callout-evidencia { font-size: 12px; font-style: italic; color: var(--muted); margin: 0 0 6px; }
   .callout-texto { font-size: 13px; color: var(--ink); margin: 0; line-height: 1.55; }
   .callout-texto-lg { font-size: 16px; line-height: 1.7; }

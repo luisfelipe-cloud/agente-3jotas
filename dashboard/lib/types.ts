@@ -136,7 +136,7 @@ export interface DashboardOverview {
   variacaoChatsAnalisadosPercentual: number;
   conversasPendentesAnalise: number;
   mediaGeralQuinzena: number;
-  tendenciaDiaria: { data: string; interacoes: number; mediaScore: number }[];
+  tendenciaDiaria: { data: string; clientes: number; mediaScore: number }[];
   pontosAtencao: PontoAtencao[];
   corretoresComMaisErros: CorretorComErros[];
   distribuicaoPorCriterio: Record<CriterioKey, number>;

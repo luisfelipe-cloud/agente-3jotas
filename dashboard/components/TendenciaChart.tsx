@@ -27,7 +27,7 @@ export function TendenciaChart({ dados }: { dados: DashboardOverview["tendenciaD
             fontSize: 12,
           }}
         />
-        <Line yAxisId="left" type="monotone" dataKey="interacoes" name="Interações" stroke="var(--color-navy-600)" strokeWidth={2} dot={false} />
+        <Line yAxisId="left" type="monotone" dataKey="clientes" name="Clientes" stroke="var(--color-navy-600)" strokeWidth={2} dot={false} />
         <Line yAxisId="right" type="monotone" dataKey="mediaScore" name="Média" stroke="var(--color-coral-600)" strokeWidth={2} dot={false} />
       </LineChart>
     </ResponsiveContainer>
