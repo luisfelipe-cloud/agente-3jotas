@@ -113,7 +113,6 @@ export default async function CorretorPage({
           leadTelefone: lead?.telefone ?? null,
           totalMensagens: elegibilidade?.total_mensagens ?? 0,
           mensagensDoLead: elegibilidade?.mensagens_lead ?? 0,
-          mensagensCorretorHumano: elegibilidade?.mensagens_corretor_humano ?? 0,
           substituida_por_id: c.substituida_por_id,
         },
         analisesPorConversa.get(c.id),

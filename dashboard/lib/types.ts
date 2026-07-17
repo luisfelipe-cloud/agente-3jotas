@@ -54,10 +54,6 @@ export interface ConversaAnalisada {
   justificativaGeral: string;
   totalMensagens: number;
   mensagensDoLead: number;
-  // Mensagens de corretor com autor_crm_user_id preenchido (humano de
-  // verdade, não a IA de qualificação) — 0 significa que a conversa foi
-  // 100% feita pela IA até agora.
-  mensagensCorretorHumano: number;
   revisado: boolean;
   resumoRevisao: string | null;
   // Só preenchido quando status === "consolidada" — id da conversa canônica

@@ -241,7 +241,7 @@ export function CorretorAnalises({
             ) : (
               <>
                 <p className="text-xs text-text-secondary">
-                  Conversas sem nenhuma mensagem de corretor humano ainda (só a IA de qualificação até agora).
+                  Conversas que ainda não têm nenhuma mensagem depois do handoff da IA.
                 </p>
                 {conversasNaoAnalisadas.length === 0 ? (
                   <p className="text-sm text-text-secondary">Nenhuma conversa não elegível neste período.</p>
@@ -440,9 +440,7 @@ function ConversaCard({
                   : conversa.status === "consolidada"
                     ? "O Clint reabriu essa conversa com o lead em um chat novo — o contexto dela foi incluído na análise da conversa mais recente desse mesmo lead com esse corretor."
                     : conversa.status === "nao_elegivel"
-                      ? conversa.mensagensCorretorHumano === 0
-                        ? "Só a IA de qualificação atendeu até agora — nenhum corretor humano respondeu ainda."
-                        : "Não atingiu o mínimo pra entrar na fila de análise."
+                      ? "Essa conversa ainda não tem mensagem suficiente pra entrar na fila de análise."
                       : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
               </p>
               {conversa.status === "consolidada" && conversa.substituidaPorId && (
@@ -453,9 +451,7 @@ function ConversaCard({
                   Ver conversa consolidada →
                 </Link>
               )}
-              {(conversa.status === "pendente" ||
-                conversa.status === "falhou" ||
-                (conversa.status === "nao_elegivel" && conversa.mensagensCorretorHumano > 0)) && (
+              {(conversa.status === "pendente" || conversa.status === "falhou" || conversa.status === "nao_elegivel") && (
                 <button
                   onClick={analisarAgora}
                   disabled={analisando}
