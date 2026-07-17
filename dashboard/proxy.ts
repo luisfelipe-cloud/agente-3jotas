@@ -45,5 +45,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|.*\\.png$).*)"],
+  // icon/apple-icon: rotas geradas em código (app/icon.tsx) pro favicon da
+  // aba — sem essa exclusão, quem não está logado via redirect pra /login
+  // ao carregar a página e o ícone nunca aparece.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|.*\\.png$).*)"],
 };
