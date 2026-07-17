@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { CRITERIOS, CRITERIO_LABEL, ETAPA_LABEL, type ApresentacaoResumo, type ConversaAnalisada, type CriterioKey } from "@/lib/types";
 import { mapApresentacaoResumo } from "@/lib/mappers";
@@ -219,6 +220,7 @@ export function CorretorAnalises({
                   <ConversaCard
                     key={conversa.conversaId}
                     conversa={conversa}
+                    corretorId={corretorId}
                     corretorNome={corretorNome}
                     abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
                   />
@@ -316,10 +318,12 @@ const STATUS_LABEL: Record<ConversaAnalisada["status"], string> = {
 
 function ConversaCard({
   conversa,
+  corretorId,
   corretorNome,
   abrirAutomaticamente,
 }: {
   conversa: ConversaAnalisada;
+  corretorId: string;
   corretorNome: string;
   abrirAutomaticamente?: boolean;
 }) {
@@ -403,13 +407,23 @@ function ConversaCard({
             Ver conversa completa →
           </button>
           {!analisada ? (
-            <p className="text-sm text-text-secondary">
-              {conversa.status === "falhou"
-                ? "A análise dessa conversa falhou e será reprocessada."
-                : conversa.status === "consolidada"
-                  ? "O Clint reabriu essa conversa com o lead em um chat novo — o contexto dela foi incluído na análise da conversa mais recente desse mesmo lead com esse corretor."
-                  : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
-            </p>
+            <div className="space-y-2">
+              <p className="text-sm text-text-secondary">
+                {conversa.status === "falhou"
+                  ? "A análise dessa conversa falhou e será reprocessada."
+                  : conversa.status === "consolidada"
+                    ? "O Clint reabriu essa conversa com o lead em um chat novo — o contexto dela foi incluído na análise da conversa mais recente desse mesmo lead com esse corretor."
+                    : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
+              </p>
+              {conversa.status === "consolidada" && conversa.substituidaPorId && (
+                <Link
+                  href={`/corretores/${corretorId}?inicio=2020-01-01&fim=${new Date().toISOString().slice(0, 10)}&conversa=${conversa.substituidaPorId}`}
+                  className="text-sm font-medium text-navy-600 hover:underline inline-block"
+                >
+                  Ver conversa consolidada →
+                </Link>
+              )}
+            </div>
           ) : (
             <>
               <p className="text-sm text-text-primary">{conversa.justificativaGeral}</p>

@@ -44,6 +44,7 @@ interface ConversaRow {
   leadTelefone: string | null;
   totalMensagens: number;
   mensagensDoLead: number;
+  substituida_por_id: string | null;
 }
 
 export function mapConversaAnalisada(
@@ -76,6 +77,7 @@ export function mapConversaAnalisada(
     mensagensDoLead: conversa.mensagensDoLead,
     revisado: analise?.revisado ?? false,
     resumoRevisao: analise?.resumo_revisao ?? null,
+    substituidaPorId: conversa.substituida_por_id,
   };
 }
 

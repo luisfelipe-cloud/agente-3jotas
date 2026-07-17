@@ -56,6 +56,9 @@ export interface ConversaAnalisada {
   mensagensDoLead: number;
   revisado: boolean;
   resumoRevisao: string | null;
+  // Só preenchido quando status === "consolidada" — id da conversa canônica
+  // do mesmo lead+corretor pra onde o contexto desta foi migrado.
+  substituidaPorId: string | null;
 }
 
 export interface ApresentacaoResumo {

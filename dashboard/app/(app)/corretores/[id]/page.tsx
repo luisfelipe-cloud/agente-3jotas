@@ -57,31 +57,43 @@ export default async function CorretorPage({
 
   const { data: conversasRows } = await supabase
     .from("conversas")
-    .select("id, iniciada_em, etapa_playbook, leads(nome_crm, telefone)")
+    .select("id, iniciada_em, etapa_playbook, substituida_por_id, leads(nome_crm, telefone)")
     .eq("corretor_id", id)
     .order("iniciada_em", { ascending: false });
 
   const conversaIds = (conversasRows ?? []).map((c) => c.id);
 
-  const [{ data: analisesRows }, { data: elegibilidadeRows }] = conversaIds.length
+  const [{ data: analisesRows }, { data: elegibilidadeRows }, { data: atividadeNoPeriodoRows }] = conversaIds.length
     ? await Promise.all([
         supabase.from("analises").select("*").in("conversa_id", conversaIds),
         supabase.from("conversa_elegibilidade").select("*").in("conversa_id", conversaIds),
+        // Só precisamos saber QUAIS conversas tiveram mensagem no período, não
+        // quantas — mas o default de 1000 linhas do PostgREST (ver
+        // dashboard-data.ts) ainda pode truncar num período longo com muita
+        // atividade; limit alto aqui evita esse mesmo bug de novo.
+        supabase
+          .from("mensagens")
+          .select("conversa_id")
+          .in("conversa_id", conversaIds)
+          .gte("enviada_em", dataInicio.toISOString())
+          .lte("enviada_em", dataFim.toISOString())
+          .limit(20000),
       ])
-    : [{ data: [] }, { data: [] }];
+    : [{ data: [] }, { data: [] }, { data: [] }];
 
   const analisesPorConversa = new Map((analisesRows ?? []).map((a) => [a.conversa_id, a]));
   const elegibilidadePorConversa = new Map((elegibilidadeRows ?? []).map((e) => [e.conversa_id, e]));
+  const conversasComAtividadeNoPeriodo = new Set((atividadeNoPeriodoRows ?? []).map((m) => m.conversa_id));
 
   const conversas = (conversasRows ?? [])
     .filter((c) => {
-      // Mesmo critério de data usado no ranking (corretor_ranking): data real
-      // da conversa (iniciada_em), não a data em que a IA processou a
-      // análise — senão reprocessar em lote (ex: resync completo) faz
-      // conversas antigas aparecerem no filtro "hoje" só porque foram
-      // (re)analisadas hoje.
-      const t = new Date(c.iniciada_em).getTime();
-      return t >= dataInicio.getTime() && t <= dataFim.getTime();
+      // Mesmo critério de data usado no ranking (corretor_ranking, 0029):
+      // teve pelo menos 1 mensagem no período — não a data de CRIAÇÃO da
+      // conversa (iniciada_em). Depois da consolidação por lead (0021), a
+      // conversa canônica de um lead pode ter sido criada semanas atrás e
+      // seguir recebendo toda a atividade nova por meses; filtrar por
+      // iniciada_em excluía quase toda conversa realmente ativa no período.
+      return conversasComAtividadeNoPeriodo.has(c.id);
     })
     .map((c) => {
       // leadTelefone vem do join com leads(telefone) logo acima.
@@ -101,6 +113,7 @@ export default async function CorretorPage({
           leadTelefone: lead?.telefone ?? null,
           totalMensagens: elegibilidade?.total_mensagens ?? 0,
           mensagensDoLead: elegibilidade?.mensagens_lead ?? 0,
+          substituida_por_id: c.substituida_por_id,
         },
         analisesPorConversa.get(c.id),
       );
