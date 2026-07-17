@@ -19,10 +19,6 @@ function scoreColor(score: number) {
   return score >= 8 ? "bg-success" : score >= 5 ? "bg-warning" : "bg-error";
 }
 
-function motivoNaoAnalisada(c: ConversaAnalisada): string {
-  return c.totalMensagens === 0 ? "Ainda sem mensagem do corretor." : "Aguardando processamento.";
-}
-
 interface InsightCorretor {
   texto: string;
   baseado_em_conversas: number;
@@ -245,28 +241,24 @@ export function CorretorAnalises({
             ) : (
               <>
                 <p className="text-xs text-text-secondary">
-                  Conversas que ainda não atingiram o mínimo pra entrar na fila de análise (3 mensagens no total, sendo 2 do lead).
+                  Conversas sem nenhuma mensagem de corretor humano ainda (só a IA de qualificação até agora).
                 </p>
                 {conversasNaoAnalisadas.length === 0 ? (
-                  <p className="text-sm text-text-secondary">Nenhuma conversa não analisada neste período.</p>
+                  <p className="text-sm text-text-secondary">Nenhuma conversa não elegível neste período.</p>
                 ) : (
                   conversasNaoAnalisadas.map((conversa) => (
-                    <Card key={conversa.conversaId} variant="elevated" className="border-l-4 border-l-gray-300 !rounded-md">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-text-primary truncate">
-                            {conversa.leadNome}
-                            {conversa.leadTelefone && (
-                              <span className="font-normal text-text-secondary"> · {conversa.leadTelefone}</span>
-                            )}
-                          </p>
-                          <p className="text-xs text-text-secondary mt-0.5">
-                            {new Date(conversa.iniciadaEm).toLocaleString("pt-BR")}
-                          </p>
-                        </div>
-                        <Badge variant="neutral">{motivoNaoAnalisada(conversa)}</Badge>
-                      </div>
-                    </Card>
+                    <ConversaCard
+                      key={conversa.conversaId}
+                      conversa={conversa}
+                      corretorId={corretorId}
+                      corretorNome={corretorNome}
+                      abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
+                      onAnalisada={() => {
+                        setToast({ tipo: "ok", texto: "Conversa analisada." });
+                        router.refresh();
+                      }}
+                      onFalhaAoAnalisar={(erro) => setToast({ tipo: "erro", texto: erro })}
+                    />
                   ))
                 )}
               </>
@@ -447,7 +439,11 @@ function ConversaCard({
                   ? "A análise dessa conversa falhou e será reprocessada."
                   : conversa.status === "consolidada"
                     ? "O Clint reabriu essa conversa com o lead em um chat novo — o contexto dela foi incluído na análise da conversa mais recente desse mesmo lead com esse corretor."
-                    : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
+                    : conversa.status === "nao_elegivel"
+                      ? conversa.mensagensCorretorHumano === 0
+                        ? "Só a IA de qualificação atendeu até agora — nenhum corretor humano respondeu ainda."
+                        : "Não atingiu o mínimo pra entrar na fila de análise."
+                      : "Essa conversa está na fila, aguardando ser analisada pelo motor de IA."}
               </p>
               {conversa.status === "consolidada" && conversa.substituidaPorId && (
                 <Link
@@ -457,7 +453,9 @@ function ConversaCard({
                   Ver conversa consolidada →
                 </Link>
               )}
-              {(conversa.status === "pendente" || conversa.status === "falhou") && (
+              {(conversa.status === "pendente" ||
+                conversa.status === "falhou" ||
+                (conversa.status === "nao_elegivel" && conversa.mensagensCorretorHumano > 0)) && (
                 <button
                   onClick={analisarAgora}
                   disabled={analisando}

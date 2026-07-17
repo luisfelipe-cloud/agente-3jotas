@@ -46,6 +46,7 @@ interface ConversaRow {
   leadTelefone: string | null;
   totalMensagens: number;
   mensagensDoLead: number;
+  mensagensCorretorHumano: number;
   substituida_por_id: string | null;
 }
 
@@ -77,6 +78,7 @@ export function mapConversaAnalisada(
     justificativaGeral: analise?.justificativa_geral ?? "",
     totalMensagens: conversa.totalMensagens,
     mensagensDoLead: conversa.mensagensDoLead,
+    mensagensCorretorHumano: conversa.mensagensCorretorHumano,
     revisado: analise?.revisado ?? false,
     resumoRevisao: analise?.resumo_revisao ?? null,
     substituidaPorId: conversa.substituida_por_id,
