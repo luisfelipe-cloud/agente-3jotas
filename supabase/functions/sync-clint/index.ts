@@ -444,26 +444,6 @@ async function consolidarPorLead(
   return canonicaId === conversaId;
 }
 
-// Fallback só para mensagens sincronizadas antes deste campo existir (o
-// sync só cobre ontem+hoje — ver comentário no topo do arquivo — então
-// conversas mais antigas nunca vão ganhar `autor_crm_user_id`
-// retroativamente). Detecta a mensagem-resumo que a IA de qualificação
-// manda antes de passar o lead pro corretor humano (algo como "Aqui está
-// um resumo das informações que você me passou... um dos nossos
-// corretores especialistas vai assumir o atendimento...").
-function pareceResumoQualificacaoIA(texto: string): boolean {
-  const t = texto.toLowerCase();
-
-  const sinalHandoff =
-    (t.includes("corretor") && (t.includes("assumir") || t.includes("atendimento"))) ||
-    t.includes("simulação oficial");
-
-  const rotulosDeQualificacao = ["nome:", "cidade", "idade:", "estado civil", "renda", "cpf"];
-  const rotulosEncontrados = rotulosDeQualificacao.filter((r) => t.includes(r)).length;
-
-  return sinalHandoff || rotulosEncontrados >= 3;
-}
-
 // `humano_assumiu_em` marca o fim da fase da IA — quem lê usa
 // `enviada_em > humano_assumiu_em` pra pegar só o que veio depois (ver
 // analyze-conversation-sync/review, analysis-batch-submit). Por isso o
@@ -471,13 +451,24 @@ function pareceResumoQualificacaoIA(texto: string): boolean {
 // assumir, não da primeira mensagem dele — senão o corte estrito (`>`)
 // excluiria por engano a primeira mensagem humana.
 //
-// Detecção primária: primeira mensagem de corretor com `autor_crm_user_id`
-// preenchido (sinal estruturado do Clint — null = IA de qualificação,
+// Detecção 100% pelo sinal estruturado do Clint: primeira mensagem de
+// corretor com `autor_crm_user_id` preenchido (null = IA de qualificação,
 // preenchido = humano de verdade). Se essa mensagem for a primeira da
 // conversa inteira, não há fase de IA a excluir (o corretor já começou o
-// atendimento) e `humano_assumiu_em` fica null. Cai pra heurística de texto
-// só se nenhuma mensagem da conversa tiver `autor_crm_user_id` (dado
-// sincronizado antes desse campo existir).
+// atendimento) e `humano_assumiu_em` fica null. Se NENHUMA mensagem tiver
+// `autor_crm_user_id`, a IA ainda está com a conversa — fica null também
+// (não é "dado antigo faltando o campo": esse campo existe desde
+// 2026-07-14, e o sync só cobre ontem+hoje, então toda conversa
+// sincronizada por aqui necessariamente já tem o campo).
+//
+// Havia um fallback por heurística de texto aqui (procurava frases tipo
+// "um dos nossos corretores vai assumir o atendimento") pra cobrir dados
+// pré-2026-07-14 — removido depois de achar 3 conversas (de 124 com
+// humano_assumiu_em setado) marcadas como "handoff" só porque a própria IA
+// mencionou "corretor" + "atendimento" na fala normal dela, sem nenhum
+// humano ter respondido (zero mensagens com autor_crm_user_id na conversa
+// inteira). Falso positivo puro — atribuía a conversa inteira ao corretor
+// responsável pelo chat mesmo sem ele ter escrito uma palavra.
 async function atualizarHandoffIA(
   // deno-lint-ignore no-explicit-any
   supabase: any,
@@ -493,7 +484,7 @@ async function atualizarHandoffIA(
 
   const { data: mensagens } = await supabase
     .from("mensagens")
-    .select("remetente, texto, enviada_em, autor_crm_user_id")
+    .select("remetente, enviada_em, autor_crm_user_id")
     .eq("conversa_id", conversaId)
     .order("enviada_em", { ascending: true });
 
@@ -504,17 +495,11 @@ async function atualizarHandoffIA(
       m.remetente === "corretor" && m.autor_crm_user_id,
   );
 
-  let cutoff: string | null = null;
-  if (indiceHumana > 0) {
-    cutoff = lista[indiceHumana - 1].enviada_em;
-  } else if (indiceHumana === -1) {
-    const resumo = lista.find(
-      (m: { remetente: string; texto: string }) => m.remetente === "corretor" && pareceResumoQualificacaoIA(m.texto),
-    );
-    cutoff = resumo?.enviada_em ?? null;
-  }
-  // indiceHumana === 0: corretor humano já respondeu desde a primeira
-  // mensagem, não tem fase de IA pra excluir — cutoff fica null.
+  // indiceHumana === -1: nenhuma mensagem de corretor tem autor_crm_user_id
+  // — a IA ainda está com a conversa, cutoff fica null (nada a excluir
+  // ainda). indiceHumana === 0: corretor humano já respondeu desde a
+  // primeira mensagem, também não tem fase de IA a excluir.
+  const cutoff: string | null = indiceHumana > 0 ? lista[indiceHumana - 1].enviada_em : null;
 
   if (!cutoff) return;
 
