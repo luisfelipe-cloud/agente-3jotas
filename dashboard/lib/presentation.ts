@@ -47,6 +47,13 @@ function escapeHtml(texto: string): string {
   return texto.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+// JSON.stringify não escapa "</" — um nome de lead com "</script>" literal
+// quebraria a tag ao ser embutido direto num <script>. Troca por "<\/" (JS
+// aceita a barra escapada dentro de string sem mudar o valor decodificado).
+function jsonParaScript(valor: unknown): string {
+  return JSON.stringify(valor).replace(/<\//g, "<\\/");
+}
+
 function logoBase64(): string {
   try {
     const caminho = path.join(process.cwd(), "public", "tresjotas_logo-removebg-preview.png");
@@ -75,10 +82,19 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   const { corretorId, corretorNome, dataInicio, dataFim, mediasPorCriterio, conversas, insight } = dados;
   const logo = logoBase64();
 
-  // Link "abrir conversa" — a apresentação é servida em /api/apresentacoes/{id}
-  // (mesma origem do dashboard), então um caminho relativo já resolve certo.
-  // A página do corretor lê ?conversa= e abre o chat daquela conversa sozinha.
+  // Link "abrir conversa" — href continua apontando pro dashboard (mesma
+  // origem, ?conversa= abre o chat lá se o usuário abrir em nova aba/ctrl-click),
+  // mas o clique normal é interceptado pelo JS da própria apresentação abaixo
+  // e abre um modal ali mesmo, sem sair do slide — não precisa navegar pra
+  // ver a conversa.
   const linkConversa = (conversaId: string) => `/corretores/${corretorId}?conversa=${conversaId}`;
+
+  // Metadados de cada conversa (nome/telefone do lead) embutidos como JSON —
+  // o modal só precisa buscar as mensagens em si (/api/conversas/{id}/mensagens),
+  // sem round-trip extra só pra saber o título.
+  const metaConversas: Record<string, { leadNome: string; leadTelefone: string | null }> = Object.fromEntries(
+    conversas.map((c) => [c.conversaId, { leadNome: c.leadNome, leadTelefone: c.leadTelefone }]),
+  );
 
   const mediaGeral = CRITERIOS.reduce((soma, c) => soma + mediasPorCriterio[c], 0) / CRITERIOS.length;
 
@@ -116,7 +132,7 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
       <div class="callout callout-erro">
         <div class="callout-topo">
           <span class="callout-tag tag-erro">${CRITERIO_LABEL[e.criterio]}</span>
-          <a class="callout-lead" href="${linkConversa(e.conversaId)}" target="_blank" rel="noopener">${escapeHtml(e.leadNome)}${e.leadTelefone ? ` · ${escapeHtml(e.leadTelefone)}` : ""}</a>
+          <a class="callout-lead abrir-conversa" href="${linkConversa(e.conversaId)}" data-conversa-id="${e.conversaId}" target="_blank" rel="noopener">${escapeHtml(e.leadNome)}${e.leadTelefone ? ` · ${escapeHtml(e.leadTelefone)}` : ""}</a>
         </div>
         ${e.evidencia ? `<p class="callout-evidencia">&ldquo;${escapeHtml(e.evidencia)}&rdquo;</p>` : ""}
         <p class="callout-texto">${escapeHtml(e.justificativa || "Critério não atendido.")}</p>
@@ -134,10 +150,10 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
       const href = linkConversa(c.conversaId);
       return `
         <tr>
-          <td><a class="linha-lead" href="${href}" target="_blank" rel="noopener">${escapeHtml(c.leadNome)}${c.leadTelefone ? `<span class="lead-telefone"> · ${escapeHtml(c.leadTelefone)}</span>` : ""}</a></td>
+          <td><a class="linha-lead abrir-conversa" href="${href}" data-conversa-id="${c.conversaId}" target="_blank" rel="noopener">${escapeHtml(c.leadNome)}${c.leadTelefone ? `<span class="lead-telefone"> · ${escapeHtml(c.leadTelefone)}</span>` : ""}</a></td>
           <td>${new Date(c.iniciadaEm).toLocaleDateString("pt-BR")}</td>
           <td class="pontos-cel">${pontos}</td>
-          <td><a class="linha-nota" href="${href}" target="_blank" rel="noopener" style="color:${corDoScore(media)}">${media.toFixed(1)}</a></td>
+          <td><a class="linha-nota abrir-conversa" href="${href}" data-conversa-id="${c.conversaId}" target="_blank" rel="noopener" style="color:${corDoScore(media)}">${media.toFixed(1)}</a></td>
         </tr>`;
     })
     .join("");
@@ -308,6 +324,24 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
   .nav button { background: var(--coral); color: white; border: none; width: 28px; height: 28px; border-radius: 999px; cursor: pointer; font-size: 14px; line-height: 1; }
   .nav button:disabled { opacity: 0.3; cursor: default; }
   .nav span { color: white; font-size: 11px; font-variant-numeric: tabular-nums; min-width: 36px; text-align: center; }
+
+  .modal-overlay { position: fixed; inset: 0; background: rgba(15,23,42,0.55); display: none; align-items: center; justify-content: center; z-index: 50; padding: 24px; }
+  .modal-overlay.aberto { display: flex; }
+  .modal-caixa { background: white; border-radius: 14px; width: 100%; max-width: 640px; max-height: 80vh; display: flex; flex-direction: column; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+  .modal-cabecalho { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+  .modal-titulo { font-size: 14px; font-weight: 700; color: var(--navy-dark); }
+  .modal-fechar { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: var(--muted); padding: 4px; }
+  .modal-corpo { padding: 18px 20px; overflow-y: auto; flex: 1; }
+  .modal-carregando, .modal-erro { color: var(--muted); font-size: 13px; margin: 0; }
+  .modal-erro { color: var(--error); }
+  .msg-linha { display: flex; flex-direction: column; margin-bottom: 12px; }
+  .msg-linha.corretor { align-items: flex-end; }
+  .msg-linha.lead { align-items: flex-start; }
+  .msg-autor { font-size: 10.5px; color: var(--muted); margin-bottom: 2px; padding: 0 4px; }
+  .msg-bolha { max-width: 80%; padding: 8px 12px; border-radius: 10px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+  .msg-linha.corretor .msg-bolha { background: var(--navy); color: white; border-top-right-radius: 2px; }
+  .msg-linha.lead .msg-bolha { background: #f1f5f9; color: var(--ink); border-top-left-radius: 2px; }
+  .msg-hora { font-size: 9.5px; color: var(--muted); margin-top: 2px; padding: 0 4px; }
 </style>
 </head>
 <body>
@@ -318,6 +352,15 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
     <button id="prev" aria-label="Anterior">&#8592;</button>
     <span id="contador"></span>
     <button id="next" aria-label="Próximo">&#8594;</button>
+  </div>
+  <div class="modal-overlay" id="modal-overlay">
+    <div class="modal-caixa">
+      <div class="modal-cabecalho">
+        <span class="modal-titulo" id="modal-titulo"></span>
+        <button class="modal-fechar" id="modal-fechar" aria-label="Fechar">&times;</button>
+      </div>
+      <div class="modal-corpo" id="modal-corpo"></div>
+    </div>
   </div>
   <script>
     const slides = document.querySelectorAll(".slide");
@@ -332,10 +375,73 @@ export function montarApresentacaoHtml(dados: DadosApresentacao): string {
     document.getElementById("prev").onclick = () => { if (atual > 0) mostrar(--atual); };
     document.getElementById("next").onclick = () => { if (atual < slides.length - 1) mostrar(++atual); };
     document.addEventListener("keydown", (e) => {
+      if (modalOverlay.classList.contains("aberto")) return;
       if (e.key === "ArrowRight" && atual < slides.length - 1) mostrar(++atual);
       if (e.key === "ArrowLeft" && atual > 0) mostrar(--atual);
     });
     mostrar(0);
+
+    // Modal "ver conversa" — abre ali mesmo em cima do slide, sem navegar
+    // pra fora da apresentação. Clique com modificador (ctrl/cmd/shift) ou
+    // botão do meio continua abrindo o link normalmente em nova aba.
+    const corretorNomeModal = ${jsonParaScript(corretorNome)};
+    const metaConversas = ${jsonParaScript(metaConversas)};
+    const modalOverlay = document.getElementById("modal-overlay");
+    const modalTitulo = document.getElementById("modal-titulo");
+    const modalCorpo = document.getElementById("modal-corpo");
+
+    function escaparHtml(texto) {
+      return String(texto).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    function fecharModal() {
+      modalOverlay.classList.remove("aberto");
+    }
+    modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) fecharModal(); });
+    document.getElementById("modal-fechar").addEventListener("click", fecharModal);
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") fecharModal(); });
+
+    async function abrirConversa(conversaId) {
+      const meta = metaConversas[conversaId] || { leadNome: "Lead", leadTelefone: null };
+      modalTitulo.textContent = meta.leadNome + (meta.leadTelefone ? " · " + meta.leadTelefone : "");
+      modalCorpo.innerHTML = '<p class="modal-carregando">Carregando conversa...</p>';
+      modalOverlay.classList.add("aberto");
+
+      try {
+        const resp = await fetch("/api/conversas/" + conversaId + "/mensagens").then((r) => r.json());
+        if (resp.ok === false) throw new Error(resp.erro || "Falha ao carregar mensagens");
+
+        const mensagens = resp.mensagens || [];
+        if (!mensagens.length) {
+          modalCorpo.innerHTML = '<p class="modal-carregando">Nenhuma mensagem registrada nesta conversa.</p>';
+          return;
+        }
+
+        modalCorpo.innerHTML = mensagens
+          .map((m) => {
+            const doCorretor = m.remetente === "corretor";
+            const autor = doCorretor ? corretorNomeModal : meta.leadNome;
+            return (
+              '<div class="msg-linha ' + (doCorretor ? "corretor" : "lead") + '">' +
+              '<span class="msg-autor">' + escaparHtml(autor) + "</span>" +
+              '<div class="msg-bolha">' + escaparHtml(m.texto) + "</div>" +
+              '<span class="msg-hora">' + new Date(m.enviadaEm).toLocaleString("pt-BR") + "</span>" +
+              "</div>"
+            );
+          })
+          .join("");
+      } catch (err) {
+        modalCorpo.innerHTML = '<p class="modal-erro">' + escaparHtml(err.message || "Falha ao carregar mensagens") + "</p>";
+      }
+    }
+
+    document.querySelectorAll(".abrir-conversa").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+        e.preventDefault();
+        abrirConversa(el.dataset.conversaId);
+      });
+    });
   </script>
 </body>
 </html>`;
