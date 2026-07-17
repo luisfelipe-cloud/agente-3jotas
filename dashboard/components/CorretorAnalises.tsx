@@ -234,6 +234,11 @@ export function CorretorAnalises({
                     corretorId={corretorId}
                     corretorNome={corretorNome}
                     abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
+                    onAnalisada={() => {
+                      setToast({ tipo: "ok", texto: "Conversa analisada." });
+                      router.refresh();
+                    }}
+                    onFalhaAoAnalisar={(erro) => setToast({ tipo: "erro", texto: erro })}
                   />
                 ))}
               </>
@@ -332,14 +337,32 @@ function ConversaCard({
   corretorId,
   corretorNome,
   abrirAutomaticamente,
+  onAnalisada,
+  onFalhaAoAnalisar,
 }: {
   conversa: ConversaAnalisada;
   corretorId: string;
   corretorNome: string;
   abrirAutomaticamente?: boolean;
+  onAnalisada?: () => void;
+  onFalhaAoAnalisar?: (erro: string) => void;
 }) {
   const [aberto, setAberto] = useState(!!abrirAutomaticamente);
   const [chatAberto, setChatAberto] = useState(!!abrirAutomaticamente);
+  const [analisando, setAnalisando] = useState(false);
+
+  async function analisarAgora() {
+    setAnalisando(true);
+    try {
+      const resp = await fetch(`/api/conversas/${conversa.conversaId}/analisar`, { method: "POST" }).then((r) => r.json());
+      if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao analisar conversa");
+      onAnalisada?.();
+    } catch (err) {
+      onFalhaAoAnalisar?.(err instanceof Error ? err.message : "Falha ao analisar conversa");
+    } finally {
+      setAnalisando(false);
+    }
+  }
 
   // Link "abrir conversa" (da apresentação em HTML) navega com ?conversa={id}
   // — como o componente já existe montado com esse id na primeira renderização
@@ -433,6 +456,15 @@ function ConversaCard({
                 >
                   Ver conversa consolidada →
                 </Link>
+              )}
+              {(conversa.status === "pendente" || conversa.status === "falhou") && (
+                <button
+                  onClick={analisarAgora}
+                  disabled={analisando}
+                  className="text-sm font-medium text-navy-600 hover:underline disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {analisando ? "Analisando…" : "Analisar conversa →"}
+                </button>
               )}
             </div>
           ) : (
