@@ -15,7 +15,11 @@
 -- filtro), pra não puxar médias com score de conversas que não têm nota
 -- ainda ou que foram consolidadas antes de ganhar um score de verdade.
 
-create or replace function corretor_ranking(data_inicio timestamptz, data_fim timestamptz)
+-- create or replace não permite mudar o formato de retorno (nova coluna
+-- conversas_analisadas) de uma função já existente — precisa dropar antes.
+drop function if exists corretor_ranking(timestamptz, timestamptz);
+
+create function corretor_ranking(data_inicio timestamptz, data_fim timestamptz)
 returns table (
   corretor_id uuid,
   nome_crm text,
