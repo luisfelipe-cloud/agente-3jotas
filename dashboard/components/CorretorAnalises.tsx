@@ -52,7 +52,7 @@ export function CorretorAnalises({
   // ?conversa={id} — abre direto o chat daquela conversa ao chegar aqui.
   const conversaParaAbrir = searchParams.get("conversa");
   const [secao, setSecao] = useState<"conversas" | "apresentacoes">("conversas");
-  const [filtroConversas, setFiltroConversas] = useState<"analisadas" | "nao_analisadas">("analisadas");
+  const [filtroConversas, setFiltroConversas] = useState<"com_nota" | "aguardando" | "nao_elegiveis">("com_nota");
   const [apresentacoes, setApresentacoes] = useState(apresentacoesIniciais);
   const [gerando, setGerando] = useState(false);
   const [excluindo, setExcluindo] = useState<ApresentacaoResumo | null>(null);
@@ -63,6 +63,7 @@ export function CorretorAnalises({
   const conversasNaoAnalisadas = useMemo(() => conversas.filter((c) => c.status === "nao_elegivel"), [conversas]);
 
   const concluidas = useMemo(() => conversasAnalisadas.filter((c) => c.status === "concluida"), [conversasAnalisadas]);
+  const aguardandoNota = useMemo(() => conversasAnalisadas.filter((c) => c.status !== "concluida"), [conversasAnalisadas]);
 
   const mediasPorCriterio = useMemo(() => {
     return Object.fromEntries(
@@ -195,17 +196,25 @@ export function CorretorAnalises({
               <h2 className="text-sm font-semibold text-navy-900">Conversas</h2>
               <div className="inline-flex rounded-full bg-gray-50 p-1">
                 <button
-                  onClick={() => setFiltroConversas("analisadas")}
+                  onClick={() => setFiltroConversas("com_nota")}
                   className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-                    filtroConversas === "analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+                    filtroConversas === "com_nota" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
                   }`}
                 >
-                  Elegíveis ({conversasAnalisadas.length})
+                  Com nota ({concluidas.length})
                 </button>
                 <button
-                  onClick={() => setFiltroConversas("nao_analisadas")}
+                  onClick={() => setFiltroConversas("aguardando")}
                   className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
-                    filtroConversas === "nao_analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+                    filtroConversas === "aguardando" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
+                  }`}
+                >
+                  Aguardando nota ({aguardandoNota.length})
+                </button>
+                <button
+                  onClick={() => setFiltroConversas("nao_elegiveis")}
+                  className={`rounded-full px-4 py-1.5 text-xs font-medium transition-colors ${
+                    filtroConversas === "nao_elegiveis" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
                   }`}
                 >
                   Não elegíveis ({conversasNaoAnalisadas.length})
@@ -213,10 +222,12 @@ export function CorretorAnalises({
               </div>
             </div>
 
-            {filtroConversas === "analisadas" ? (
+            {filtroConversas !== "nao_elegiveis" ? (
               <>
-                {conversasAnalisadas.length === 0 && <p className="text-sm text-text-secondary">Nenhuma conversa neste período.</p>}
-                {conversasAnalisadas.map((conversa) => (
+                {(filtroConversas === "com_nota" ? concluidas : aguardandoNota).length === 0 && (
+                  <p className="text-sm text-text-secondary">Nenhuma conversa neste período.</p>
+                )}
+                {(filtroConversas === "com_nota" ? concluidas : aguardandoNota).map((conversa) => (
                   <ConversaCard
                     key={conversa.conversaId}
                     conversa={conversa}
