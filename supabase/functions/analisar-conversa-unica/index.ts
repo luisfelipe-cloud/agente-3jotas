@@ -6,7 +6,9 @@
 //
 // Mesma lógica de contexto/critérios/playbooks do pipeline em lote
 // (analysis-batch-submit) — só troca batchGenerateContent por
-// generateContent (resposta na hora, sem polling).
+// generateContent (resposta na hora, sem polling). Faz os mesmos 2 passes do
+// lote noturno (análise + revisão, ver analysis-batch-poll/submeterLoteRevisao),
+// só que em sequência síncrona em vez de 2 lotes encadeados.
 //
 // Disparo: POST { conversaId } com o mesmo CRON_SECRET das demais functions
 // (a rota /api/conversas/[id]/analisar do dashboard repassa a chamada).
@@ -61,6 +63,14 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   primeiro_contato: "1º Contato",
   envio_simulacao: "Envio de Simulação",
   resultado_analise: "Resultado de Análise",
+};
+
+const CRITERIO_LABEL: Record<CriterioKey, string> = {
+  fluxo: "Fluxo Ligação/Mensagem",
+  fluidez: "Fluidez",
+  cta: "CTA",
+  clareza: "Clareza da Informação",
+  playbook: "Aderência ao Playbook",
 };
 
 // Idêntico ao buscarMensagensDoGrupo de analysis-batch-submit — junta as
@@ -151,6 +161,99 @@ function montarAvaliacaoSchema(parametros: ParametroCriterio[]) {
   required.push("justificativa_geral");
 
   return { type: "OBJECT", properties, required };
+}
+
+function criterioRevisaoSchema(descricaoCriterio: string, notaMaxima: number) {
+  return {
+    type: "OBJECT",
+    description: descricaoCriterio,
+    properties: {
+      score: { type: "INTEGER", description: `Nota revisada de 0 (não atendeu) até ${notaMaxima} (atendeu plenamente).` },
+      evidencia: { type: "STRING", description: "Trecho literal da conversa que embasa a nota revisada." },
+      justificativa: { type: "STRING", description: "1-2 frases explicando a nota revisada." },
+      mudou: { type: "BOOLEAN", description: "true se essa nota mudou em relação à avaliação original." },
+    },
+    required: ["score", "evidencia", "justificativa", "mudou"],
+  };
+}
+
+function montarRevisaoSchema(parametrosAtivos: ParametroCriterio[]) {
+  // deno-lint-ignore no-explicit-any
+  const properties: Record<string, any> = {};
+  const required: string[] = [];
+
+  for (const p of parametrosAtivos) {
+    properties[p.criterio] = criterioRevisaoSchema(p.descricao, p.nota_maxima);
+    required.push(p.criterio);
+  }
+
+  properties.resumo_revisao = {
+    type: "STRING",
+    description: "2-3 frases resumindo o que mudou nesta revisão e por quê, ou explicando que a avaliação original já estava correta e nada mudou.",
+  };
+  required.push("resumo_revisao");
+
+  return { type: "OBJECT", properties, required };
+}
+
+// deno-lint-ignore no-explicit-any
+function montarPromptRevisao(mensagens: Mensagem[], playbook: string, resultadoOriginal: Record<string, any>, ativos: ParametroCriterio[]) {
+  const avaliacaoOriginal = ativos
+    .map((p) => {
+      const c = resultadoOriginal[p.criterio];
+      if (!c) return null;
+      return `- ${CRITERIO_LABEL[p.criterio]} (instrução: "${p.descricao}"): nota ${c.score}/${p.nota_maxima} — evidência citada: "${c.evidencia}" — justificativa: "${c.justificativa}"`;
+    })
+    .filter(Boolean)
+    .join("\n");
+
+  const transcricao = mensagens
+    .map((m) => `[${m.enviada_em}] ${m.remetente === "corretor" ? "Corretor" : "Lead"}: ${m.texto}`)
+    .join("\n");
+
+  const systemPrompt = `Você é um revisor sênior de QA, mais experiente que o avaliador que fez a primeira passada desta conversa.
+
+Playbooks configurados (técnicas/scripts de referência da imobiliária — ver
+critério "playbook" no schema para o julgamento esperado, que é frio e
+agnóstico de etapa):
+"""
+${playbook}
+"""
+
+A primeira avaliação (feita critério a critério, isoladamente) resultou em:
+${avaliacaoOriginal}
+
+Releia a conversa completa abaixo prestando atenção a nuances que uma avaliação
+isolada por critério pode perder: ironia ou sarcasmo, o corretor recuperando
+uma falha mais tarde na conversa, gírias e expressões regionais, mudança de
+tom do lead ao longo do atendimento, contexto que só faz sentido lendo tudo
+junto. Ajuste a nota, evidência e justificativa de cada critério apenas onde a
+avaliação original estiver de fato equivocada — mantenha a nota original
+quando ela já estiver correta, mesmo que a evidência citada não seja o único
+trecho relevante. Não mude uma nota só para ser diferente da original.`;
+
+  return { systemPrompt, transcricao };
+}
+
+// deno-lint-ignore no-explicit-any
+function montarUpsertRevisao(conversaId: string, revisao: Record<string, any>, ativos: ParametroCriterio[]) {
+  // deno-lint-ignore no-explicit-any
+  const upsert: Record<string, any> = {
+    conversa_id: conversaId,
+    revisado: true,
+    revisado_em: new Date().toISOString(),
+    resumo_revisao: revisao.resumo_revisao ?? null,
+  };
+
+  for (const p of ativos) {
+    const c = revisao[p.criterio];
+    if (!c) continue;
+    upsert[`${p.criterio}_score`] = c.score;
+    upsert[`${p.criterio}_evidencia`] = c.evidencia;
+    upsert[`${p.criterio}_justificativa`] = c.justificativa;
+  }
+
+  return upsert;
 }
 
 function montarPrompt(mensagens: Mensagem[], playbook: string) {
@@ -304,6 +407,50 @@ Deno.serve(async (req) => {
 
     await supabase.from("analises").upsert(montarUpsertAnalise(conversaId, resultado), { onConflict: "conversa_id" });
     await supabase.from("analises_bruta").upsert(montarUpsertBruta(conversaId, resultado), { onConflict: "conversa_id" });
+
+    // 2º passe (revisão) — mesma ideia do analysis-batch-poll/submeterLoteRevisao,
+    // só que síncrono. Falha aqui não desfaz a análise (já concluída e válida);
+    // só fica sem o selo "revisado por IA", igual ao caso "sem resposta no
+    // lote de revisão" do pipeline em lote.
+    const ativos = parametros.filter((p) => p.ativo);
+    try {
+      const revisaoSchema = montarRevisaoSchema(ativos);
+      const { systemPrompt: systemPromptRevisao, transcricao: transcricaoRevisao } = montarPromptRevisao(
+        mensagens,
+        playbook,
+        resultado,
+        ativos,
+      );
+
+      const respRevisao = await fetch(`${GEMINI_API_URL}/models/${MODEL}:generateContent`, {
+        method: "POST",
+        headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: systemPromptRevisao }] },
+          contents: [{ role: "user", parts: [{ text: `Conversa completa:\n\n${transcricaoRevisao}` }] }],
+          generationConfig: { responseMimeType: "application/json", responseSchema: revisaoSchema },
+        }),
+      });
+
+      if (!respRevisao.ok) throw new Error(`Gemini API (revisão) retornou ${respRevisao.status}: ${await respRevisao.text()}`);
+
+      const dataRevisao = await respRevisao.json();
+      const textoRevisao = dataRevisao.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!textoRevisao) throw new Error("resposta do Gemini (revisão) sem texto (bloqueada ou vazia)");
+
+      const revisao = JSON.parse(textoRevisao);
+      await supabase.from("analises").upsert(montarUpsertRevisao(conversaId, revisao, ativos), { onConflict: "conversa_id" });
+    } catch (errRevisao) {
+      await supabase.from("analises").upsert(
+        {
+          conversa_id: conversaId,
+          revisado: true,
+          revisado_em: new Date().toISOString(),
+          resumo_revisao: `Não revisada: ${errRevisao instanceof Error ? errRevisao.message : String(errRevisao)}`,
+        },
+        { onConflict: "conversa_id" },
+      );
+    }
 
     return new Response(JSON.stringify({ ok: true, conversaId }), { headers: { "Content-Type": "application/json" } });
   } catch (err) {
