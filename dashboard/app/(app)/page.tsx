@@ -22,11 +22,11 @@ export default async function DashboardPage() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
-          label="Chats analisados hoje"
+          label="Chats analisados"
           value={d.chatsAnalisadosHoje}
           trend={{ value: d.variacaoChatsAnalisadosPercentual, label: "vs. ontem" }}
         />
-        <StatCard label="Pendentes de análise" value={d.conversasPendentesAnalise} hint="Na fila de processamento" />
+        <StatCard label="Pendentes de análise (serão analisados hoje)" value={d.conversasPendentesAnalise} hint="Na fila de processamento" />
         <StatCard label="Média geral" value={d.mediaGeralQuinzena.toFixed(1)} hint="Quinzena atual · escala 0-10" />
         <StatCard label="Pontos de atenção" value={d.pontosAtencao.length} hint="Detectados nas últimas 24h" />
       </div>
