@@ -205,7 +205,7 @@ export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
                   <div>
                     <p className="font-semibold text-text-primary leading-tight">{r.corretor.nome_crm}</p>
                     <p className="text-xs text-text-secondary mt-0.5">
-                      {r.totalConversas} conversas ({r.conversasAnalisadas} analisadas) {!r.corretor.ativo && "· inativo"}
+                      {r.totalConversas} conversas ({r.conversasComNota} com nota) {!r.corretor.ativo && "· inativo"}
                     </p>
                   </div>
                 </div>

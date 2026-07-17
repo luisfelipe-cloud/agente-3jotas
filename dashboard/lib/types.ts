@@ -74,9 +74,9 @@ export interface CorretorRanking {
   // Toda conversa com atividade no período, mesmo as que nunca entram na
   // fila por não atingir o mínimo de mensagens.
   totalConversas: number;
-  // Subconjunto elegível de totalConversas (qualquer status != nao_elegivel:
-  // concluida, pendente, processando, consolidada, falhou).
-  conversasAnalisadas: number;
+  // Subconjunto de totalConversas que já tem score (status = concluida) —
+  // não confundir com "elegível" (que inclui pendente/processando/etc).
+  conversasComNota: number;
   mediaGeral: number;
   mediaPorCriterio: Record<CriterioKey, number>;
 }

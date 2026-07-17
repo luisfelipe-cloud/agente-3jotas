@@ -8,7 +8,7 @@ interface CorretorRankingRow {
   nome_crm: string;
   ativo: boolean;
   total_conversas: number;
-  conversas_analisadas: number;
+  conversas_com_nota: number;
   fluxo: number | null;
   fluidez: number | null;
   cta: number | null;
@@ -32,7 +32,7 @@ export function mapCorretorRanking(row: CorretorRankingRow): CorretorRanking {
   return {
     corretor: { id: row.corretor_id, nome_crm: row.nome_crm, ativo: row.ativo },
     totalConversas: row.total_conversas,
-    conversasAnalisadas: row.conversas_analisadas,
+    conversasComNota: row.conversas_com_nota,
     mediaGeral,
     mediaPorCriterio,
   };

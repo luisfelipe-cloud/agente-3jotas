@@ -130,7 +130,7 @@ export default async function CorretorPage({
         </Link>
         <h1 className="text-2xl font-extrabold text-navy-900 mt-1">{ranking.corretor.nome_crm}</h1>
         <p className="text-sm text-text-secondary">
-          {ranking.totalConversas} conversas ({ranking.conversasAnalisadas} analisadas) na quinzena atual
+          {ranking.totalConversas} conversas ({ranking.conversasComNota} com nota) na quinzena atual
         </p>
       </div>
 
