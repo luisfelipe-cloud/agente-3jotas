@@ -71,7 +71,12 @@ export interface ApresentacaoResumo {
 
 export interface CorretorRanking {
   corretor: Corretor;
+  // Toda conversa com atividade no período, mesmo as que nunca entram na
+  // fila por não atingir o mínimo de mensagens.
   totalConversas: number;
+  // Subconjunto elegível de totalConversas (qualquer status != nao_elegivel:
+  // concluida, pendente, processando, consolidada, falhou).
+  conversasAnalisadas: number;
   mediaGeral: number;
   mediaPorCriterio: Record<CriterioKey, number>;
 }
