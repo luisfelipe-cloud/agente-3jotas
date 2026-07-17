@@ -200,7 +200,7 @@ export function CorretorAnalises({
                     filtroConversas === "analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
                   }`}
                 >
-                  Analisadas ({conversasAnalisadas.length})
+                  Elegíveis ({conversasAnalisadas.length})
                 </button>
                 <button
                   onClick={() => setFiltroConversas("nao_analisadas")}
@@ -208,7 +208,7 @@ export function CorretorAnalises({
                     filtroConversas === "nao_analisadas" ? "bg-navy-600 text-white shadow-sm" : "text-text-secondary hover:text-navy-600"
                   }`}
                 >
-                  Não analisadas ({conversasNaoAnalisadas.length})
+                  Não elegíveis ({conversasNaoAnalisadas.length})
                 </button>
               </div>
             </div>
