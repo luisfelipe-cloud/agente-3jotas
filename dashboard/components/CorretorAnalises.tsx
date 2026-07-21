@@ -234,7 +234,11 @@ export function CorretorAnalises({
                       setToast({ tipo: "ok", texto: "Conversa analisada." });
                       router.refresh();
                     }}
-                    onFalhaAoAnalisar={(erro) => setToast({ tipo: "erro", texto: erro })}
+                    onDesconsiderada={() => {
+                      setToast({ tipo: "ok", texto: "Análise desconsiderada — média recalculada." });
+                      router.refresh();
+                    }}
+                    onErro={(erro) => setToast({ tipo: "erro", texto: erro })}
                   />
                 ))}
               </>
@@ -257,7 +261,7 @@ export function CorretorAnalises({
                         setToast({ tipo: "ok", texto: "Conversa analisada." });
                         router.refresh();
                       }}
-                      onFalhaAoAnalisar={(erro) => setToast({ tipo: "erro", texto: erro })}
+                      onErro={(erro) => setToast({ tipo: "erro", texto: erro })}
                     />
                   ))
                 )}
@@ -330,18 +334,22 @@ function ConversaCard({
   corretorNome,
   abrirAutomaticamente,
   onAnalisada,
-  onFalhaAoAnalisar,
+  onDesconsiderada,
+  onErro,
 }: {
   conversa: ConversaAnalisada;
   corretorId: string;
   corretorNome: string;
   abrirAutomaticamente?: boolean;
   onAnalisada?: () => void;
-  onFalhaAoAnalisar?: (erro: string) => void;
+  onDesconsiderada?: () => void;
+  onErro?: (erro: string) => void;
 }) {
   const [aberto, setAberto] = useState(!!abrirAutomaticamente);
   const [chatAberto, setChatAberto] = useState(!!abrirAutomaticamente);
   const [analisando, setAnalisando] = useState(false);
+  const [desconsiderando, setDesconsiderando] = useState(false);
+  const [confirmandoDesconsiderar, setConfirmandoDesconsiderar] = useState(false);
 
   async function analisarAgora() {
     setAnalisando(true);
@@ -350,9 +358,23 @@ function ConversaCard({
       if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao analisar conversa");
       onAnalisada?.();
     } catch (err) {
-      onFalhaAoAnalisar?.(err instanceof Error ? err.message : "Falha ao analisar conversa");
+      onErro?.(err instanceof Error ? err.message : "Falha ao analisar conversa");
     } finally {
       setAnalisando(false);
+    }
+  }
+
+  async function confirmarDesconsiderar() {
+    setDesconsiderando(true);
+    try {
+      const resp = await fetch(`/api/conversas/${conversa.conversaId}/analise`, { method: "DELETE" }).then((r) => r.json());
+      if (resp.ok === false) throw new Error(resp.erro ?? "Falha ao desconsiderar análise");
+      setConfirmandoDesconsiderar(false);
+      onDesconsiderada?.();
+    } catch (err) {
+      onErro?.(err instanceof Error ? err.message : "Falha ao desconsiderar análise");
+    } finally {
+      setDesconsiderando(false);
     }
   }
 
@@ -481,12 +503,28 @@ function ConversaCard({
                   );
                 })}
               </div>
+              <button
+                onClick={() => setConfirmandoDesconsiderar(true)}
+                className="text-sm font-medium text-error hover:underline"
+              >
+                Desconsiderar análise
+              </button>
             </>
           )}
         </div>
       )}
 
       <ChatModal open={chatAberto} onClose={() => setChatAberto(false)} conversa={conversa} corretorNome={corretorNome} />
+
+      {confirmandoDesconsiderar && (
+        <ConfirmModal
+          titulo="Desconsiderar análise"
+          mensagem="Isso apaga a análise dessa conversa (nota e justificativas) e recalcula a média do corretor sem ela. Use quando a IA avaliou incorretamente. Se a conversa receber mensagem nova depois, ela volta a ser analisada normalmente. Essa ação não pode ser desfeita."
+          confirmando={desconsiderando}
+          onConfirmar={confirmarDesconsiderar}
+          onCancelar={() => setConfirmandoDesconsiderar(false)}
+        />
+      )}
     </Card>
   );
 }
