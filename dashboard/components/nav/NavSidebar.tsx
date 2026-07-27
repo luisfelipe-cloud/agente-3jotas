@@ -4,11 +4,12 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { IconGrid, IconUsers, IconSettings, IconLogout } from "@/components/ui/icons";
+import { IconGrid, IconUsers, IconSettings, IconLogout, IconPhoneCall } from "@/components/ui/icons";
 
 const TABS = [
   { href: "/", label: "Dashboard", Icon: IconGrid },
   { href: "/corretores", label: "Corretores", Icon: IconUsers },
+  { href: "/reativacao-base", label: "Reativação", Icon: IconPhoneCall },
   { href: "/configuracoes", label: "Configurações", Icon: IconSettings },
 ];
 

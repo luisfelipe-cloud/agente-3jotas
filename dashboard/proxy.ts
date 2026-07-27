@@ -48,5 +48,11 @@ export const config = {
   // icon/apple-icon: rotas geradas em código (app/icon.tsx) pro favicon da
   // aba — sem essa exclusão, quem não está logado via redirect pra /login
   // ao carregar a página e o ícone nunca aparece.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|.*\\.png$).*)"],
+  //
+  // reativacao/ e api/reativacao/ (com barra no fim, propositalmente): a
+  // página pública de reativação de base (/reativacao/{campanhaId}) é
+  // aberta pelo corretor sem login — sem essa exclusão ela também cairia
+  // no redirect pra /login. A barra evita bater com a rota administrativa
+  // /reativacao-base (que precisa continuar exigindo login).
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icon|apple-icon|reativacao/|api/reativacao/|.*\\.png$).*)"],
 };

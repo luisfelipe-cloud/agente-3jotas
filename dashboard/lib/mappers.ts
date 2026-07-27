@@ -1,7 +1,7 @@
 // Converte linhas cruas do Supabase (snake_case, nulls onde não há análise
 // ainda) para os tipos que os componentes do dashboard já esperam.
 
-import { CRITERIOS, type AnaliseStatus, type ApresentacaoResumo, type CorretorRanking, type CriterioKey, type CriterioResultado, type ConversaAnalisada, type EtapaPlaybook, type ParametroCriterio, type PlaybookScript } from "./types";
+import { CRITERIOS, type AnaliseStatus, type ApresentacaoResumo, type CampanhaReativacaoLead, type CorretorRanking, type CriterioKey, type CriterioResultado, type ConversaAnalisada, type EtapaPlaybook, type ParametroCriterio, type PlaybookScript } from "./types";
 
 interface CorretorRankingRow {
   corretor_id: string;
@@ -136,5 +136,33 @@ export function mapApresentacaoResumo(row: ApresentacaoRow): ApresentacaoResumo 
     dataInicio: row.data_inicio,
     dataFim: row.data_fim,
     criadoEm: row.criado_em,
+  };
+}
+
+interface CampanhaReativacaoLeadRow {
+  id: string;
+  nome: string | null;
+  telefone: string;
+  status_importado: string | null;
+  etapa_funil_importado: string | null;
+  atendeu_11h: boolean;
+  atendeu_16h: boolean;
+  atendeu_18h: boolean;
+  atendeu: boolean | null;
+  deseja_continuar: boolean | null;
+}
+
+export function mapCampanhaReativacaoLead(row: CampanhaReativacaoLeadRow): CampanhaReativacaoLead {
+  return {
+    id: row.id,
+    nome: row.nome,
+    telefone: row.telefone,
+    statusImportado: row.status_importado,
+    etapaFunilImportado: row.etapa_funil_importado,
+    atendeu11h: row.atendeu_11h,
+    atendeu16h: row.atendeu_16h,
+    atendeu18h: row.atendeu_18h,
+    atendeu: row.atendeu,
+    desejaContinuar: row.deseja_continuar,
   };
 }

@@ -149,3 +149,49 @@ export interface DashboardOverview {
   corretoresComMaisErros: CorretorComErros[];
   distribuicaoPorCriterio: Record<CriterioKey, number>;
 }
+
+// --- Reativação de base ------------------------------------------------
+
+export interface CampanhaReativacaoLead {
+  id: string;
+  nome: string | null;
+  telefone: string;
+  statusImportado: string | null;
+  etapaFunilImportado: string | null;
+  atendeu11h: boolean;
+  atendeu16h: boolean;
+  atendeu18h: boolean;
+  // null = corretor ainda não respondeu.
+  atendeu: boolean | null;
+  desejaContinuar: boolean | null;
+}
+
+export interface CampanhaReativacaoResumo {
+  id: string;
+  corretorId: string;
+  corretorNome: string;
+  data: string;
+  totalLeads: number;
+  totalRespondidos: number;
+  criadoEm: string;
+}
+
+export interface CampanhaReativacaoDetalhe {
+  id: string;
+  corretorNome: string;
+  data: string;
+  leads: CampanhaReativacaoLead[];
+}
+
+// Visão do gestor: histórico de ligações de um corretor num período,
+// achatando todas as campanhas (uma por dia) numa lista só de leads com a
+// data de cada bateria.
+export interface LeadReativacaoHistorico extends CampanhaReativacaoLead {
+  data: string;
+}
+
+export interface HistoricoReativacaoCorretor {
+  corretorId: string;
+  corretorNome: string;
+  leads: LeadReativacaoHistorico[];
+}
