@@ -119,20 +119,24 @@ export function ReativacaoForm({
             <StatusIndicador status={statusPorLead[lead.id] ?? "idle"} />
           </div>
 
-          <div className="flex flex-wrap gap-2 border-t border-border pt-3.5">
-            <Chip ativo={lead.atendeu11h} onClick={() => salvarCampo(lead.id, { atendeu11h: !lead.atendeu11h })}>
-              11h
-            </Chip>
-            <Chip ativo={lead.atendeu16h} onClick={() => salvarCampo(lead.id, { atendeu16h: !lead.atendeu16h })}>
-              16h
-            </Chip>
-            <Chip ativo={lead.atendeu18h} onClick={() => salvarCampo(lead.id, { atendeu18h: !lead.atendeu18h })}>
-              18h
-            </Chip>
-          </div>
-
-          <div className="flex flex-wrap gap-5">
+          <div className="flex flex-wrap items-start gap-5 border-t border-border pt-3.5">
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-text-secondary">Ligou</span>
+              <div className="flex gap-2">
+                <Chip ativo={lead.atendeu11h} onClick={() => salvarCampo(lead.id, { atendeu11h: !lead.atendeu11h })}>
+                  11h
+                </Chip>
+                <Chip ativo={lead.atendeu16h} onClick={() => salvarCampo(lead.id, { atendeu16h: !lead.atendeu16h })}>
+                  16h
+                </Chip>
+                <Chip ativo={lead.atendeu18h} onClick={() => salvarCampo(lead.id, { atendeu18h: !lead.atendeu18h })}>
+                  18h
+                </Chip>
+              </div>
+            </div>
+            <div className="w-px self-stretch bg-border" />
             <SimNaoToggle label="Atendeu?" valor={lead.atendeu} onChange={(v) => salvarCampo(lead.id, { atendeu: v })} />
+            <div className="w-px self-stretch bg-border" />
             <SimNaoToggle
               label="Deseja continuar?"
               valor={lead.desejaContinuar}

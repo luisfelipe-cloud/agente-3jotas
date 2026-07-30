@@ -101,9 +101,11 @@ export default async function HistoricoReativacaoPage({
         <p className="text-sm text-text-secondary mt-1">Histórico de ligações de reativação no período selecionado</p>
       </div>
 
-      <ReativacaoCorretorPainel corretorId={corretorId} campanhasIniciais={campanhas} />
-
-      <PeriodoCorretoresFiltro />
+      <ReativacaoCorretorPainel
+        corretorId={corretorId}
+        campanhasIniciais={campanhas}
+        filtro={<PeriodoCorretoresFiltro />}
+      />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Leads na lista" value={totalLeads} />

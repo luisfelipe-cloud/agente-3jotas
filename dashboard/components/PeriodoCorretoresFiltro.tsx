@@ -1,5 +1,6 @@
 "use client";
 
+import { useTransition } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 
 function hojeISO() {
@@ -10,6 +11,7 @@ export function PeriodoCorretoresFiltro() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const [pendente, startTransition] = useTransition();
 
   const inicio = searchParams.get("inicio") ?? hojeISO();
   const fim = searchParams.get("fim") ?? hojeISO();
@@ -17,11 +19,17 @@ export function PeriodoCorretoresFiltro() {
 
   function atualizar(novoInicio: string, novoFim: string) {
     const params = new URLSearchParams({ inicio: novoInicio, fim: novoFim });
-    router.push(`${pathname}?${params.toString()}`);
+    // startTransition marca a navegação como não-urgente: os campos de data
+    // atualizam na hora (sem travar esperando os dados novos) e o
+    // loading.tsx da rota assume enquanto o conteúdo novo carrega — sem
+    // isso, a troca de data dava a impressão de travar até tudo recarregar.
+    startTransition(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
   }
 
   return (
-    <div className="flex flex-wrap items-end gap-3">
+    <div className={`flex flex-wrap items-end gap-3 transition-opacity ${pendente ? "opacity-60" : ""}`}>
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-medium text-text-secondary">De</label>
         <input
