@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
-import type { LeadReativacaoHistorico } from "@/lib/types";
+import type { CampanhaReativacaoResumo, LeadReativacaoHistorico } from "@/lib/types";
 import { StatCard } from "@/components/StatCard";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
 import { PeriodoCorretoresFiltro } from "@/components/PeriodoCorretoresFiltro";
+import { ReativacaoCorretorPainel } from "@/components/ReativacaoCorretorPainel";
 
 function hojeISO() {
   return new Date().toISOString().slice(0, 10);
@@ -32,6 +33,27 @@ export default async function HistoricoReativacaoPage({
 
   const { data: corretor } = await supabase.from("corretores").select("nome_crm").eq("id", corretorId).maybeSingle();
   if (!corretor) notFound();
+
+  const { data: campanhasRaw, error: campanhasError } = await supabase
+    .from("campanhas_reativacao")
+    .select("id, data, criado_em, campanha_reativacao_leads(id, atendeu)")
+    .eq("corretor_id", corretorId)
+    .order("data", { ascending: false });
+
+  if (campanhasError) throw new Error(`Erro ao carregar campanhas: ${campanhasError.message}`);
+
+  const campanhas: CampanhaReativacaoResumo[] = (campanhasRaw ?? []).map((c) => {
+    const leads = (c.campanha_reativacao_leads ?? []) as { id: string; atendeu: boolean | null }[];
+    return {
+      id: c.id,
+      corretorId,
+      corretorNome: corretor.nome_crm,
+      data: c.data,
+      totalLeads: leads.length,
+      totalRespondidos: leads.filter((l) => l.atendeu !== null).length,
+      criadoEm: c.criado_em,
+    };
+  });
 
   const { data, error } = await supabase
     .from("campanha_reativacao_leads")
@@ -78,6 +100,8 @@ export default async function HistoricoReativacaoPage({
         <h1 className="text-2xl font-extrabold text-navy-900 mt-1">{corretor.nome_crm}</h1>
         <p className="text-sm text-text-secondary mt-1">Histórico de ligações de reativação no período selecionado</p>
       </div>
+
+      <ReativacaoCorretorPainel corretorId={corretorId} campanhasIniciais={campanhas} />
 
       <PeriodoCorretoresFiltro />
 
