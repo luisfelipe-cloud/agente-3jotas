@@ -28,6 +28,9 @@ interface Mensagem {
   remetente: RemetenteTipo;
   texto: string;
   enviada_em: string;
+  // null = IA de qualificação (Lívia/Maria) escreveu essa mensagem, não um
+  // corretor humano — ver checagem "100% IA" mais abaixo.
+  autor_crm_user_id: string | null;
 }
 
 interface Conversa {
@@ -198,6 +201,19 @@ literais da conversa como evidência. Não invente informação que não está n
   };
 }
 
+// `.in()` com uma lista grande de uuids gera uma URL enorme (~36 chars por
+// id) que já causou erro de protocolo HTTP/2 vindo do Supabase quando o
+// backlog estava grande — atualiza em lotes menores pra não depender do
+// tamanho da lista.
+const TAMANHO_LOTE_UPDATE = 100;
+// deno-lint-ignore no-explicit-any
+async function atualizarStatusEmLotes(supabase: any, ids: string[], update: Record<string, unknown>): Promise<void> {
+  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_UPDATE) {
+    const lote = ids.slice(i, i + TAMANHO_LOTE_UPDATE);
+    await supabase.from("analises").update(update).in("conversa_id", lote);
+  }
+}
+
 // Limite de segurança — a Gemini Batch API aceita requests inline até 20MB
 // no corpo total; conversas normais (poucas dezenas de mensagens) ficam bem
 // abaixo disso mesmo em lotes de várias centenas. Se o volume diário crescer
@@ -236,14 +252,30 @@ Deno.serve(async (req) => {
 
   const conversaIds = pendentes.map((p: { conversa_id: string }) => p.conversa_id);
 
-  const { data: conversas, error: conversasError } = await supabase
-    .from("conversas")
-    .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
-    .in("id", conversaIds)
-    .returns<Conversa[]>();
+  // Buscar as até 500 conversas de uma vez só com `.in()` gera uma URL
+  // gigante (cada uuid ~36 chars) que já derrubou essa function com erro de
+  // protocolo HTTP/2 ("stream error") quando o backlog estava grande —
+  // silenciosamente, sem nunca marcar nada como 'processando', então o
+  // backlog só crescia noite após noite. Busca em lotes menores evita isso
+  // independente do tamanho do backlog.
+  const TAMANHO_LOTE_BUSCA = 100;
+  const conversas: Conversa[] = [];
+  for (let i = 0; i < conversaIds.length; i += TAMANHO_LOTE_BUSCA) {
+    const idsDoLote = conversaIds.slice(i, i + TAMANHO_LOTE_BUSCA);
+    const { data: parte, error: parteError } = await supabase
+      .from("conversas")
+      .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
+      .in("id", idsDoLote)
+      .returns<Conversa[]>();
 
-  if (conversasError || !conversas?.length) {
-    return new Response(`erro ao buscar conversas: ${conversasError?.message}`, { status: 500 });
+    if (parteError) {
+      return new Response(`erro ao buscar conversas: ${parteError.message}`, { status: 500 });
+    }
+    conversas.push(...(parte ?? []));
+  }
+
+  if (!conversas.length) {
+    return new Response("erro ao buscar conversas: nenhuma encontrada", { status: 500 });
   }
 
   let responseSchema;
@@ -259,6 +291,7 @@ Deno.serve(async (req) => {
 
   const requests: unknown[] = [];
   const semMensagens: string[] = [];
+  const semCorretorHumano: string[] = [];
 
   for (const conversa of conversas) {
     const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
@@ -267,14 +300,33 @@ Deno.serve(async (req) => {
       continue;
     }
 
+    // "100% IA": nenhuma mensagem de corretor tem autor_crm_user_id
+    // preenchido — quem atendeu até agora foi só a IA de qualificação
+    // (Lívia/Maria), o corretor dono do chat ainda não escreveu nada.
+    // Avaliar essa conversa seria pontuar a IA no lugar do corretor. Não
+    // fica preso pra sempre: essa checagem roda de novo a cada noite, então
+    // assim que um humano responder de verdade ela entra no lote seguinte
+    // normalmente — diferente da trava antiga (0032), que ficava guardada
+    // num status já calculado e não se corrigia sozinha quando a regra ou
+    // os dados mudavam.
+    const temCorretorHumano = mensagens.some((m) => m.remetente === "corretor" && m.autor_crm_user_id);
+    if (!temCorretorHumano) {
+      semCorretorHumano.push(conversa.id);
+      continue;
+    }
+
     requests.push(montarRequestInline(conversa.id, mensagens, playbook, responseSchema));
   }
 
   if (semMensagens.length) {
-    await supabase
-      .from("analises")
-      .update({ status: "falhou", erro: "conversa sem mensagens" })
-      .in("conversa_id", semMensagens);
+    await atualizarStatusEmLotes(supabase, semMensagens, { status: "falhou", erro: "conversa sem mensagens" });
+  }
+
+  if (semCorretorHumano.length) {
+    await atualizarStatusEmLotes(supabase, semCorretorHumano, {
+      status: "nao_elegivel",
+      erro: "100% IA de qualificação (Lívia/Maria) — corretor ainda não engajou",
+    });
   }
 
   if (!requests.length) {
@@ -319,10 +371,7 @@ Deno.serve(async (req) => {
   }
 
   const idsEnviados = conversas.filter((c) => !semMensagens.includes(c.id)).map((c) => c.id);
-  await supabase
-    .from("analises")
-    .update({ status: "processando", batch_id: registroBatch.id })
-    .in("conversa_id", idsEnviados);
+  await atualizarStatusEmLotes(supabase, idsEnviados, { status: "processando", batch_id: registroBatch.id });
 
   return new Response(
     JSON.stringify({

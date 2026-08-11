@@ -25,6 +25,9 @@ interface Mensagem {
   remetente: RemetenteTipo;
   texto: string;
   enviada_em: string;
+  // null = IA de qualificação (Lívia/Maria), não um corretor humano — ver
+  // checagem "100% IA" no handler principal.
+  autor_crm_user_id: string | null;
 }
 
 interface Conversa {
@@ -372,6 +375,16 @@ Deno.serve(async (req) => {
         status: 422,
         headers: { "Content-Type": "application/json" },
       });
+    }
+
+    // Mesma checagem "100% IA" do analysis-batch-submit — sem isso, o botão
+    // manual "Analisar conversa" pontuaria a IA de qualificação (Lívia/Maria)
+    // no lugar do corretor.
+    const temCorretorHumano = mensagens.some((m) => m.remetente === "corretor" && m.autor_crm_user_id);
+    if (!temCorretorHumano) {
+      const erro = "100% IA de qualificação (Lívia/Maria) — corretor ainda não engajou, nada pra analisar";
+      await supabase.from("analises").update({ status: "nao_elegivel", erro }).eq("conversa_id", conversaId);
+      return new Response(JSON.stringify({ ok: false, erro }), { status: 422, headers: { "Content-Type": "application/json" } });
     }
 
     const parametros = await buscarParametrosAtivos(supabase);

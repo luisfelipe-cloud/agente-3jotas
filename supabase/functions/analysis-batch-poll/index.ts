@@ -72,6 +72,31 @@ function createServiceClient() {
   return createClient(url, key);
 }
 
+// `.in()` com uma lista grande de uuids gera uma URL enorme (~36 chars por
+// id) que já causou erro de protocolo HTTP/2 vindo do Supabase quando o
+// lote estava grande (ver mesmo comentário em analysis-batch-submit) —
+// busca/atualiza em pedaços menores pra não depender do tamanho do lote.
+const TAMANHO_LOTE_IN = 100;
+
+// deno-lint-ignore no-explicit-any
+async function buscarEmLotes<T>(supabase: any, tabela: string, colunas: string, coluna: string, ids: string[]): Promise<T[]> {
+  const resultado: T[] = [];
+  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_IN) {
+    const lote = ids.slice(i, i + TAMANHO_LOTE_IN);
+    const { data } = await supabase.from(tabela).select(colunas).in(coluna, lote);
+    resultado.push(...((data ?? []) as T[]));
+  }
+  return resultado;
+}
+
+// deno-lint-ignore no-explicit-any
+async function atualizarEmLotes(supabase: any, tabela: string, coluna: string, ids: string[], update: Record<string, unknown>): Promise<void> {
+  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_IN) {
+    const lote = ids.slice(i, i + TAMANHO_LOTE_IN);
+    await supabase.from(tabela).update(update).in(coluna, lote);
+  }
+}
+
 const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   primeiro_contato: "1º Contato",
   envio_simulacao: "Envio de Simulação",
@@ -417,15 +442,18 @@ async function submeterLoteRevisao(
   apiKey: string,
   conversaIds: string[],
 ): Promise<void> {
-  const { data: conversas } = await supabase
-    .from("conversas")
-    .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
-    .in("id", conversaIds)
-    .returns<Conversa[]>();
+  const conversas = await buscarEmLotes<Conversa>(
+    supabase,
+    "conversas",
+    "id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id",
+    "id",
+    conversaIds,
+  );
 
-  if (!conversas?.length) return;
+  if (!conversas.length) return;
 
-  const { data: brutas } = await supabase.from("analises_bruta").select("*").in("conversa_id", conversaIds);
+  // deno-lint-ignore no-explicit-any
+  const brutas = await buscarEmLotes<any>(supabase, "analises_bruta", "*", "conversa_id", conversaIds);
   const brutaPorConversa = new Map((brutas ?? []).map((b: { conversa_id: string }) => [b.conversa_id, b]));
 
   const parametros = await buscarParametrosAtivos(supabase);
@@ -543,6 +571,6 @@ trecho relevante. Não mude uma nota só para ser diferente da original.`;
 
   if (registroBatch) {
     const idsComRequest = conversas.filter((c) => !semBruta.includes(c.id)).map((c) => c.id);
-    await supabase.from("analises").update({ batch_id: registroBatch.id }).in("conversa_id", idsComRequest);
+    await atualizarEmLotes(supabase, "analises", "conversa_id", idsComRequest, { batch_id: registroBatch.id });
   }
 }
