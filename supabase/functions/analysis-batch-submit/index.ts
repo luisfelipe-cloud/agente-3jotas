@@ -70,6 +70,21 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   resultado_analise: "Resultado de Análise",
 };
 
+// Placeholder fixo que sync-clint grava pra mensagens content_type=TEMPLATE
+// (blast automático do WhatsApp Business, não digitado pelo corretor) — ver
+// textoMensagem/switch default em sync-clint/index.ts.
+const EH_TEMPLATE_VAZIO = /^\[Conteúdo sem texto: TEMPLATE\]$/;
+
+// Script fixo da IA de qualificação (Playbook 1: "Sou a Lívia, assistente da
+// Três Jotas Imobiliária ✨" / variante "Maria") — mensagem canned, sempre
+// idêntica, usada só pra pegar esse caso específico. Não é um match solto de
+// nome: "Maria"/"Lívia" sozinhos são nomes comuns de lead (confirmado em
+// produção — corretor de verdade cumprimentando lead chamada Maria/"Ana
+// Livia"/"Clivia" tem autor_crm_user_id preenchido normalmente), então um
+// bare match nesses nomes geraria falso positivo e descartaria mensagem real
+// de corretor. Exige a frase de auto-apresentação completa.
+const EH_APRESENTACAO_IA = /sou a (l[ií]via|maria)[,.]?\s*assistente/i;
+
 // Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
 // conversas do mesmo grupo (lead_id + corretor_id), não só a canônica.
 async function buscarMensagensDoGrupo(
@@ -95,6 +110,18 @@ async function buscarMensagensDoGrupo(
     .returns<Mensagem[]>();
 
   return (todasMensagens ?? []).filter((m) => {
+    // Mensagem de template do WhatsApp Business (blast automático, não
+    // digitado pelo corretor) — sync-clint grava esse placeholder fixo
+    // quando o content_type do Clint é TEMPLATE (ver textoMensagem/switch
+    // default). Não reflete comunicação real, não deve entrar na
+    // transcrição nem contar como "corretor humano engajou".
+    if (EH_TEMPLATE_VAZIO.test(m.texto)) return false;
+
+    // Auto-apresentação da IA de qualificação — desconsidera mesmo se por
+    // algum motivo vier com autor_crm_user_id preenchido (pedido explícito:
+    // esse conteúdo nunca deve contar como atendimento humano).
+    if (m.remetente === "corretor" && EH_APRESENTACAO_IA.test(m.texto)) return false;
+
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });

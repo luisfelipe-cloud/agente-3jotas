@@ -103,6 +103,15 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   resultado_analise: "Resultado de Análise",
 };
 
+// Placeholder fixo que sync-clint grava pra mensagens content_type=TEMPLATE
+// (blast automático do WhatsApp Business, não digitado pelo corretor).
+const EH_TEMPLATE_VAZIO = /^\[Conteúdo sem texto: TEMPLATE\]$/;
+
+// Script fixo da IA de qualificação (Playbook 1) — ver mesmo comentário em
+// analysis-batch-submit. Exige a frase de auto-apresentação completa (não
+// bare match de nome) porque "Maria"/"Lívia" também são nomes reais de lead.
+const EH_APRESENTACAO_IA = /sou a (l[ií]via|maria)[,.]?\s*assistente/i;
+
 // Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
 // conversas do mesmo grupo (lead_id + corretor_id), não só a canônica.
 async function buscarMensagensDoGrupo(
@@ -128,6 +137,8 @@ async function buscarMensagensDoGrupo(
     .returns<Mensagem[]>();
 
   return (todasMensagens ?? []).filter((m) => {
+    if (EH_TEMPLATE_VAZIO.test(m.texto)) return false;
+    if (m.remetente === "corretor" && EH_APRESENTACAO_IA.test(m.texto)) return false;
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });
