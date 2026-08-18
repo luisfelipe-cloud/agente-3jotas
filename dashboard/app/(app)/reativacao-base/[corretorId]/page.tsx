@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 import type { CampanhaReativacaoResumo, LeadReativacaoHistorico } from "@/lib/types";
 import { StatCard } from "@/components/StatCard";
 import { Card } from "@/components/ui/Card";
@@ -25,6 +26,12 @@ export default async function HistoricoReativacaoPage({
   searchParams: Promise<{ inicio?: string; fim?: string }>;
 }) {
   const { corretorId } = await params;
+
+  const session = await getDashboardSession();
+  if (session?.role === "corretor" && session.corretorId !== corretorId) {
+    notFound();
+  }
+
   const sp = await searchParams;
   const inicio = sp.inicio ?? hojeISO();
   const fim = sp.fim ?? hojeISO();

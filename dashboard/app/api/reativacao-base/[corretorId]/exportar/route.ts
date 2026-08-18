@@ -1,4 +1,5 @@
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 function hojeISO() {
   return new Date().toISOString().slice(0, 10);
@@ -12,6 +13,12 @@ function csv(valor: string): string {
 // (atendeu = false ou null) num período, pra reforço manual/repescagem.
 export async function GET(req: Request, { params }: { params: Promise<{ corretorId: string }> }) {
   const { corretorId } = await params;
+
+  const session = await getDashboardSession();
+  if (session?.role === "corretor" && session.corretorId !== corretorId) {
+    return new Response("Não autorizado", { status: 403 });
+  }
+
   const url = new URL(req.url);
   const inicio = url.searchParams.get("inicio") ?? hojeISO();
   const fim = url.searchParams.get("fim") ?? hojeISO();

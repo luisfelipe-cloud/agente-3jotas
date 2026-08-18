@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 export async function POST(req: Request) {
+  const session = await getDashboardSession();
+  if (session?.role === "corretor") {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
+  }
+
   const body = await req.json();
   const nomeCrm = typeof body.nome_crm === "string" ? body.nome_crm.trim() : "";
 

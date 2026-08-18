@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Papa from "papaparse";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 // Linha crua do CSV de "negócios" exportado do Clint — só os campos que
 // interessam. Diferente do fluxo antigo (removido), não tenta casar
@@ -16,6 +17,12 @@ interface LinhaCsv {
 
 export async function POST(req: Request, { params }: { params: Promise<{ corretorId: string }> }) {
   const { corretorId } = await params;
+
+  const session = await getDashboardSession();
+  if (session?.role === "corretor" && session.corretorId !== corretorId) {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
+  }
+
   const form = await req.formData();
   const arquivo = form.get("arquivo");
   const dataStr = form.get("data");

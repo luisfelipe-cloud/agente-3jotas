@@ -5,17 +5,31 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { IconGrid, IconUsers, IconSettings, IconLogout, IconPhoneCall } from "@/components/ui/icons";
+import type { DashboardSession } from "@/lib/session";
 
-const TABS = [
+const TABS_ADMIN = [
   { href: "/", label: "Dashboard", Icon: IconGrid },
   { href: "/corretores", label: "Corretores", Icon: IconUsers },
   { href: "/reativacao-base", label: "Reativação", Icon: IconPhoneCall },
   { href: "/configuracoes", label: "Configurações", Icon: IconSettings },
 ];
 
-export function NavSidebar({ userEmail }: { userEmail: string | null }) {
+function tabsParaSessao(session: DashboardSession | null) {
+  if (session?.role === "corretor") {
+    return [
+      { href: `/corretores/${session.corretorId}`, label: "Corretores", Icon: IconUsers },
+      { href: `/reativacao-base/${session.corretorId}`, label: "Reativação", Icon: IconPhoneCall },
+    ];
+  }
+  // Fail-closed: sessão nula (não deve acontecer dentro do grupo (app),
+  // já garantido pelo proxy.ts) não mostra tabs extras em vez de assumir admin.
+  return session?.role === "admin" ? TABS_ADMIN : [];
+}
+
+export function NavSidebar({ userEmail, session }: { userEmail: string | null; session: DashboardSession | null }) {
   const pathname = usePathname();
   const router = useRouter();
+  const tabs = tabsParaSessao(session);
 
   async function sair() {
     const supabase = createSupabaseBrowserClient();
@@ -40,7 +54,7 @@ export function NavSidebar({ userEmail }: { userEmail: string | null }) {
       </div>
       <div className="border-t border-border mx-5" />
       <nav className="flex flex-col gap-1 px-3 pt-4">
-        {TABS.map((tab) => {
+        {tabs.map((tab) => {
           const active = tab.href === "/" ? pathname === "/" : pathname.startsWith(tab.href);
           return (
             <Link

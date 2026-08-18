@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 import { montarApresentacaoHtml } from "@/lib/presentation";
 import { CRITERIOS, type CriterioKey } from "@/lib/types";
 
@@ -8,6 +9,11 @@ export async function GET(req: Request) {
   const corretorId = new URL(req.url).searchParams.get("corretorId");
   if (!corretorId) {
     return NextResponse.json({ ok: false, erro: "corretorId é obrigatório" }, { status: 400 });
+  }
+
+  const session = await getDashboardSession();
+  if (session?.role === "corretor" && session.corretorId !== corretorId) {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 
   const supabase = createServiceClient();
@@ -48,6 +54,11 @@ export async function POST(req: Request) {
 
   if (!corretorId || !corretorNome || !dataInicio || !dataFim || !mediasPorCriterio || !conversas) {
     return NextResponse.json({ ok: false, erro: "dados incompletos para gerar a apresentação" }, { status: 400 });
+  }
+
+  const session = await getDashboardSession();
+  if (session?.role === "corretor" && session.corretorId !== corretorId) {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 
   for (const c of CRITERIOS) {

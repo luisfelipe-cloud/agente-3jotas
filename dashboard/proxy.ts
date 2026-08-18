@@ -27,15 +27,18 @@ export async function proxy(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  const isLoginPage = request.nextUrl.pathname.startsWith("/login");
+  // /cadastro (autocadastro do corretor) é pública igual /login — sem
+  // sessão, dá pra acessar; com sessão, redireciona pra fora.
+  const isPaginaPublicaDeAuth =
+    request.nextUrl.pathname.startsWith("/login") || request.nextUrl.pathname.startsWith("/cadastro");
 
-  if (!user && !isLoginPage) {
+  if (!user && !isPaginaPublicaDeAuth) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
   }
 
-  if (user && isLoginPage) {
+  if (user && isPaginaPublicaDeAuth) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

@@ -1,8 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
-import { LoginForm } from "@/components/LoginForm";
+import { CadastroForm } from "@/components/CadastroForm";
 
-export default function LoginPage() {
+export default function CadastroPage() {
   return (
     <div className="min-h-screen flex">
       <div className="hidden md:flex md:w-3/4 relative items-center justify-center bg-white overflow-hidden">
@@ -21,14 +21,16 @@ export default function LoginPage() {
             <Image src="/tresjotas_logo-removebg-preview.png" alt="Três Jotas" width={140} height={51} priority />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white">Entrar</h1>
-            <p className="text-sm text-white/80 mt-1">Acesse sua conta para continuar</p>
+            <h1 className="text-xl font-bold text-white">Criar conta</h1>
+            <p className="text-sm text-white/80 mt-1">
+              Cadastre-se pra acessar suas análises. Depois de criar a conta, peça pro seu gestor liberar o acesso.
+            </p>
           </div>
-          <LoginForm />
+          <CadastroForm />
           <p className="text-sm text-white/80 text-center">
-            Ainda não tem conta?{" "}
-            <Link href="/cadastro" className="font-semibold text-white hover:underline">
-              Cadastre-se
+            Já tem conta?{" "}
+            <Link href="/login" className="font-semibold text-white hover:underline">
+              Entrar
             </Link>
           </p>
         </div>

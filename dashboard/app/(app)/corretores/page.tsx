@@ -1,4 +1,6 @@
+import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 import { mapCorretorRanking } from "@/lib/mappers";
 import { CorretoresManager } from "@/components/CorretoresManager";
 import { PeriodoCorretoresFiltro } from "@/components/PeriodoCorretoresFiltro";
@@ -12,6 +14,11 @@ export default async function CorretoresPage({
 }: {
   searchParams: Promise<{ inicio?: string; fim?: string }>;
 }) {
+  const session = await getDashboardSession();
+  if (session?.role === "corretor") {
+    redirect(`/corretores/${session.corretorId}`);
+  }
+
   const sp = await searchParams;
   const inicio = sp.inicio ?? hojeISO();
   const fim = sp.fim ?? hojeISO();

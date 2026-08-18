@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getDashboardSession();
+  if (session?.role === "corretor") {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
+  }
+
   const { id } = await params;
   const body = await req.json();
 
@@ -26,6 +32,11 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // Apagar um corretor apaga em cascata conversas/mensagens/análises dele
 // (FK on delete cascade) — irreversível quando já existe histórico real.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getDashboardSession();
+  if (session?.role === "corretor") {
+    return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
+  }
+
   const { id } = await params;
   const supabase = createServiceClient();
   const { error } = await supabase.from("corretores").delete().eq("id", id);

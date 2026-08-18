@@ -1,7 +1,14 @@
+import { redirect } from "next/navigation";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 import { ReativacaoCorretoresLista, type CorretorReativacaoResumo } from "@/components/ReativacaoCorretoresLista";
 
 export default async function ReativacaoBasePage() {
+  const session = await getDashboardSession();
+  if (session?.role === "corretor") {
+    redirect(`/reativacao-base/${session.corretorId}`);
+  }
+
   const supabase = createServiceClient();
 
   const { data, error } = await supabase

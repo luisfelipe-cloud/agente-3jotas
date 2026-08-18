@@ -4,18 +4,22 @@ import { useState } from "react";
 import type { ParametroCriterio, PlaybookScript } from "@/lib/types";
 import { ParametrosForm } from "@/components/ParametrosForm";
 import { PlaybooksForm } from "@/components/PlaybooksForm";
+import { UsuariosForm, type CorretorAcesso } from "@/components/UsuariosForm";
 
 const SUBABAS = [
   { id: "criterios", label: "Critérios" },
   { id: "playbooks", label: "Playbooks" },
+  { id: "usuarios", label: "Usuários" },
 ] as const;
 
 export function ConfiguracoesTabs({
   parametrosIniciais,
   playbooksIniciais,
+  corretoresIniciais,
 }: {
   parametrosIniciais: ParametroCriterio[];
   playbooksIniciais: PlaybookScript[];
+  corretoresIniciais: CorretorAcesso[];
 }) {
   const [aba, setAba] = useState<(typeof SUBABAS)[number]["id"]>("criterios");
 
@@ -35,11 +39,9 @@ export function ConfiguracoesTabs({
         ))}
       </div>
 
-      {aba === "criterios" ? (
-        <ParametrosForm parametrosIniciais={parametrosIniciais} />
-      ) : (
-        <PlaybooksForm playbooksIniciais={playbooksIniciais} />
-      )}
+      {aba === "criterios" && <ParametrosForm parametrosIniciais={parametrosIniciais} />}
+      {aba === "playbooks" && <PlaybooksForm playbooksIniciais={playbooksIniciais} />}
+      {aba === "usuarios" && <UsuariosForm corretoresIniciais={corretoresIniciais} />}
     </div>
   );
 }
