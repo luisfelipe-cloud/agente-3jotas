@@ -10,6 +10,30 @@ function hojeISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+// `.in("conversa_id", ids)` com uma lista grande de uuids gera uma URL
+// enorme (~36 chars por id) que o PostgREST rejeita com 400 — corretor com
+// muitas conversas (o caso mais comum é justamente quem mais atende, ou
+// seja, quem mais precisa da página funcionando) esbarrava nisso e a página
+// caía silenciosamente pra "0 conversas" porque nenhuma das queries abaixo
+// checa `error` (mesma classe de bug já corrigida nas Edge Functions do
+// pipeline de análise — ver analysis-batch-submit). Busca em lotes menores
+// evita depender do tamanho da lista.
+const TAMANHO_LOTE_IN = 150;
+
+async function buscarEmLotes<T>(
+  query: (lote: string[]) => PromiseLike<{ data: T[] | null; error: unknown }>,
+  ids: string[],
+): Promise<T[]> {
+  const resultado: T[] = [];
+  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_IN) {
+    const lote = ids.slice(i, i + TAMANHO_LOTE_IN);
+    const { data, error } = await query(lote);
+    if (error) throw new Error(`Erro ao buscar dados em lote: ${error instanceof Error ? error.message : JSON.stringify(error)}`);
+    resultado.push(...(data ?? []));
+  }
+  return resultado;
+}
+
 export default async function CorretorPage({
   params,
   searchParams,
@@ -70,27 +94,30 @@ export default async function CorretorPage({
 
   const conversaIds = (conversasRows ?? []).map((c) => c.id);
 
-  const [{ data: analisesRows }, { data: elegibilidadeRows }, { data: atividadeNoPeriodoRows }] = conversaIds.length
-    ? await Promise.all([
-        supabase.from("analises").select("*").in("conversa_id", conversaIds),
-        supabase.from("conversa_elegibilidade").select("*").in("conversa_id", conversaIds),
-        // Só precisamos saber QUAIS conversas tiveram mensagem no período, não
-        // quantas — mas o default de 1000 linhas do PostgREST (ver
-        // dashboard-data.ts) ainda pode truncar num período longo com muita
-        // atividade; limit alto aqui evita esse mesmo bug de novo.
+  const [analisesRows, elegibilidadeRows, atividadeNoPeriodoRows] = await Promise.all([
+    buscarEmLotes((lote) => supabase.from("analises").select("*").in("conversa_id", lote), conversaIds),
+    buscarEmLotes((lote) => supabase.from("conversa_elegibilidade").select("*").in("conversa_id", lote), conversaIds),
+    // Só precisamos saber QUAIS conversas tiveram mensagem no período, não
+    // quantas — mas o default de 1000 linhas do PostgREST (ver
+    // dashboard-data.ts) ainda pode truncar num período longo com muita
+    // atividade dentro de um único lote; limit alto por lote evita esse
+    // mesmo bug de novo.
+    buscarEmLotes(
+      (lote) =>
         supabase
           .from("mensagens")
           .select("conversa_id")
-          .in("conversa_id", conversaIds)
+          .in("conversa_id", lote)
           .gte("enviada_em", dataInicio.toISOString())
           .lte("enviada_em", dataFim.toISOString())
           .limit(20000),
-      ])
-    : [{ data: [] }, { data: [] }, { data: [] }];
+      conversaIds,
+    ),
+  ]);
 
-  const analisesPorConversa = new Map((analisesRows ?? []).map((a) => [a.conversa_id, a]));
-  const elegibilidadePorConversa = new Map((elegibilidadeRows ?? []).map((e) => [e.conversa_id, e]));
-  const conversasComAtividadeNoPeriodo = new Set((atividadeNoPeriodoRows ?? []).map((m) => m.conversa_id));
+  const analisesPorConversa = new Map(analisesRows.map((a) => [a.conversa_id, a]));
+  const elegibilidadePorConversa = new Map(elegibilidadeRows.map((e) => [e.conversa_id, e]));
+  const conversasComAtividadeNoPeriodo = new Set(atividadeNoPeriodoRows.map((m) => m.conversa_id));
 
   const conversas = (conversasRows ?? [])
     .filter((c) => {

@@ -582,8 +582,16 @@ interface CamposMidia {
 // na hora e marca `midia_descrita = false`: a function
 // processar-midia-pendente (cron próprio, mais frequente e em lotes
 // pequenos) descreve depois, sem competir pelo orçamento de tempo do sync.
+// Algumas mensagens do WhatsApp Business chegam do Clint com `content`
+// preenchido só com o prefixo de autoria do grupo/atendimento compartilhado
+// (ex: "*Victor Castro:* \n ") e nada de texto real depois — sem essa
+// checagem, isso passava como se fosse conteúdo genuíno e a IA analisava uma
+// mensagem vazia como se o corretor tivesse escrito algo. Ocorre aos
+// milhares em produção (ex: 652 casos só pro Victor Castro).
+const PREFIXO_AUTOR_SEM_CONTEUDO = /^\*[^*]+:\*\s*$/;
+
 function montarCamposMensagem(msg: ClintMessage, remetente: "corretor" | "lead"): CamposMidia {
-  if (msg.content) {
+  if (msg.content && !PREFIXO_AUTOR_SEM_CONTEUDO.test(msg.content)) {
     return { texto: msg.content, midiaContentType: null, midiaContentUrl: null, midiaMimeType: null, midiaNome: null, midiaDescrita: true };
   }
 

@@ -70,10 +70,14 @@ const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   resultado_analise: "Resultado de Análise",
 };
 
-// Placeholder fixo que sync-clint grava pra mensagens content_type=TEMPLATE
-// (blast automático do WhatsApp Business, não digitado pelo corretor) — ver
-// textoMensagem/switch default em sync-clint/index.ts.
-const EH_TEMPLATE_VAZIO = /^\[Conteúdo sem texto: TEMPLATE\]$/;
+// Placeholder que sync-clint grava pra qualquer content_type sem texto real
+// (TEMPLATE = blast automático do WhatsApp Business, STICKER, LOCATION,
+// CONTACT etc — não digitado pelo corretor) — ver textoMensagem/switch
+// default em sync-clint/index.ts. Cobre qualquer content_type, não só
+// TEMPLATE: mensagens vazias (ex: só prefixo de autoria "*Nome:*" sem
+// conteúdo, ~600+ casos observados em produção) também caem nesse mesmo
+// placeholder genérico depois da checagem PREFIXO_AUTOR_SEM_CONTEUDO no sync.
+const EH_CONTEUDO_VAZIO = /^\[Conteúdo sem texto: .+\]$/;
 
 // Script fixo da IA de qualificação (Playbook 1: "Sou a Lívia, assistente da
 // Três Jotas Imobiliária ✨" / variante "Maria") — mensagem canned, sempre
@@ -115,7 +119,7 @@ async function buscarMensagensDoGrupo(
     // quando o content_type do Clint é TEMPLATE (ver textoMensagem/switch
     // default). Não reflete comunicação real, não deve entrar na
     // transcrição nem contar como "corretor humano engajou".
-    if (EH_TEMPLATE_VAZIO.test(m.texto)) return false;
+    if (EH_CONTEUDO_VAZIO.test(m.texto)) return false;
 
     // Auto-apresentação da IA de qualificação — desconsidera mesmo se por
     // algum motivo vier com autor_crm_user_id preenchido (pedido explícito:
