@@ -42,6 +42,18 @@ export interface MensagemChat {
   enviadaEm: string;
 }
 
+// Uma linha de análise de um dia específico (conversa_id + dia) — a
+// conversa pode ter uma dessas por dia de atividade já analisado.
+export interface AnaliseDoDia {
+  dia: string;
+  analisadoEm: string | null;
+  status: AnaliseStatus;
+  criterios: Record<CriterioKey, CriterioResultado>;
+  justificativaGeral: string;
+  revisado: boolean;
+  resumoRevisao: string | null;
+}
+
 export interface ConversaAnalisada {
   conversaId: string;
   leadNome: string;
@@ -59,6 +71,11 @@ export interface ConversaAnalisada {
   // Só preenchido quando status === "consolidada" — id da conversa canônica
   // do mesmo lead+corretor pra onde o contexto desta foi migrado.
   substituidaPorId: string | null;
+  // Todas as linhas de análise dessa conversa (uma por dia de atividade),
+  // ordenadas do dia mais recente pro mais antigo. Os campos escalares acima
+  // (status/criterios/justificativaGeral/...) espelham o primeiro item desta
+  // lista — mantido assim pra não quebrar UI que já lê os campos escalares.
+  historicoAnalises: AnaliseDoDia[];
 }
 
 export interface ApresentacaoResumo {

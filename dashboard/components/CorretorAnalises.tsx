@@ -229,6 +229,7 @@ export function CorretorAnalises({
                     conversa={conversa}
                     corretorId={corretorId}
                     corretorNome={corretorNome}
+                    periodo={periodo}
                     abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
                     onAnalisada={() => {
                       setToast({ tipo: "ok", texto: "Conversa analisada." });
@@ -256,6 +257,7 @@ export function CorretorAnalises({
                       conversa={conversa}
                       corretorId={corretorId}
                       corretorNome={corretorNome}
+                      periodo={periodo}
                       abrirAutomaticamente={conversa.conversaId === conversaParaAbrir}
                       onAnalisada={() => {
                         setToast({ tipo: "ok", texto: "Conversa analisada." });
@@ -332,6 +334,7 @@ function ConversaCard({
   conversa,
   corretorId,
   corretorNome,
+  periodo,
   abrirAutomaticamente,
   onAnalisada,
   onDesconsiderada,
@@ -340,6 +343,7 @@ function ConversaCard({
   conversa: ConversaAnalisada;
   corretorId: string;
   corretorNome: string;
+  periodo: { inicio: string; fim: string };
   abrirAutomaticamente?: boolean;
   onAnalisada?: () => void;
   onDesconsiderada?: () => void;
@@ -350,6 +354,7 @@ function ConversaCard({
   const [analisando, setAnalisando] = useState(false);
   const [desconsiderando, setDesconsiderando] = useState(false);
   const [confirmandoDesconsiderar, setConfirmandoDesconsiderar] = useState(false);
+  const [historicoAberto, setHistoricoAberto] = useState(false);
 
   async function analisarAgora() {
     setAnalisando(true);
@@ -405,6 +410,17 @@ function ConversaCard({
 
   const analisadoEmDiaDiferente =
     analisada && conversa.analisadoEm && new Date(conversa.analisadoEm).toDateString() !== new Date(conversa.iniciadaEm).toDateString();
+
+  const periodoInicioISO = periodo.inicio;
+  const periodoFimISO = periodo.fim;
+  const diasConcluidosNoPeriodo = conversa.historicoAnalises.filter(
+    (h) => h.status === "concluida" && h.dia >= periodoInicioISO && h.dia <= periodoFimISO,
+  );
+  // Espelha a regra de mapConversaAnalisada: card agregado quando há mais de
+  // 1 dia concluído dentro do período filtrado — evidência/justificativa de
+  // texto não têm como ser "a média", então ficam escondidas nesse caso
+  // (olhar dia a dia é o que o histórico abaixo é pra isso).
+  const agregadoDeVariosDias = analisada && diasConcluidosNoPeriodo.length > 1;
 
   return (
     <Card variant="elevated" className={`border-l-4 ${corBorda} !rounded-md`}>
@@ -485,7 +501,14 @@ function ConversaCard({
             </div>
           ) : (
             <>
-              <p className="text-sm text-text-primary">{conversa.justificativaGeral}</p>
+              {agregadoDeVariosDias ? (
+                <p className="text-sm text-text-secondary">
+                  Nota média de {diasConcluidosNoPeriodo.length} dias concluídos no período — veja evidências e
+                  justificativas de cada dia no histórico abaixo.
+                </p>
+              ) : (
+                <p className="text-sm text-text-primary">{conversa.justificativaGeral}</p>
+              )}
               <div className="space-y-2.5">
                 {CRITERIOS.map((c) => {
                   const r = conversa.criterios[c];
@@ -495,20 +518,59 @@ function ConversaCard({
                         <span className={`h-2 w-2 rounded-full shrink-0 ${scoreColor(r.score)}`} />
                         <span className="text-text-secondary">{CRITERIO_LABEL[c]}</span>
                       </div>
-                      <div className="text-text-secondary">
-                        <p className="italic">&ldquo;{r.evidencia}&rdquo;</p>
-                        <p className="text-text-primary">{r.justificativa}</p>
-                      </div>
+                      {!agregadoDeVariosDias && (
+                        <div className="text-text-secondary">
+                          <p className="italic">&ldquo;{r.evidencia}&rdquo;</p>
+                          <p className="text-text-primary">{r.justificativa}</p>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
               </div>
-              <button
-                onClick={() => setConfirmandoDesconsiderar(true)}
-                className="text-sm font-medium text-error hover:underline"
-              >
-                Desconsiderar análise
-              </button>
+              <div className="flex items-center gap-4">
+                <button
+                  onClick={() => setConfirmandoDesconsiderar(true)}
+                  className="text-sm font-medium text-error hover:underline"
+                >
+                  Desconsiderar análise
+                </button>
+                {conversa.historicoAnalises.length > 1 && (
+                  <button
+                    onClick={() => setHistoricoAberto((v) => !v)}
+                    className="text-sm font-medium text-navy-600 hover:underline"
+                  >
+                    {historicoAberto ? "Ocultar" : "Ver"} histórico de dias ({conversa.historicoAnalises.length})
+                  </button>
+                )}
+              </div>
+
+              {historicoAberto && conversa.historicoAnalises.length > 1 && (
+                <div className="mt-2 space-y-2 rounded-md bg-gray-50 p-3">
+                  {conversa.historicoAnalises.map((dia) => {
+                    const mediaDia = CRITERIOS.reduce((soma, c) => soma + dia.criterios[c].score, 0) / CRITERIOS.length;
+                    return (
+                      <div key={dia.dia} className="flex items-center justify-between gap-3 text-xs">
+                        <span className="text-text-secondary">
+                          {new Date(`${dia.dia}T00:00:00`).toLocaleDateString("pt-BR")}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-semibold ${scoreColor(mediaDia).replace("bg-", "text-")}`}>
+                            {mediaDia.toFixed(1)}
+                          </span>
+                          {CRITERIOS.map((c) => (
+                            <span
+                              key={c}
+                              title={`${CRITERIO_LABEL[c]}: ${dia.criterios[c].score.toFixed(1)}`}
+                              className={`h-2 w-2 rounded-full ${scoreColor(dia.criterios[c].score)}`}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </>
           )}
         </div>

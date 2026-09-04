@@ -115,7 +115,16 @@ export default async function CorretorPage({
     ),
   ]);
 
-  const analisesPorConversa = new Map(analisesRows.map((a) => [a.conversa_id, a]));
+  // `analises` tem uma linha por (conversa_id, dia) — uma conversa pode ter
+  // várias linhas de análise, uma por dia de atividade já analisado.
+  // Agrupamento real (não um Map 1:1, que sobrescreveria silenciosamente as
+  // linhas de dias anteriores mantendo só a última do array).
+  const analisesPorConversa = new Map<string, typeof analisesRows>();
+  for (const a of analisesRows) {
+    const lista = analisesPorConversa.get(a.conversa_id) ?? [];
+    lista.push(a);
+    analisesPorConversa.set(a.conversa_id, lista);
+  }
   const elegibilidadePorConversa = new Map(elegibilidadeRows.map((e) => [e.conversa_id, e]));
   const conversasComAtividadeNoPeriodo = new Set(atividadeNoPeriodoRows.map((m) => m.conversa_id));
 
@@ -149,7 +158,8 @@ export default async function CorretorPage({
           mensagensDoLead: elegibilidade?.mensagens_lead ?? 0,
           substituida_por_id: c.substituida_por_id,
         },
-        analisesPorConversa.get(c.id),
+        analisesPorConversa.get(c.id) ?? [],
+        { dataInicioISO: inicio, dataFimISO: fim },
       );
     });
 
@@ -164,7 +174,7 @@ export default async function CorretorPage({
         </Link>
         <h1 className="text-2xl font-extrabold text-navy-900 mt-1">{ranking.corretor.nome_crm}</h1>
         <p className="text-sm text-text-secondary">
-          {ranking.totalConversas} conversas ({ranking.conversasComNota} com nota) na quinzena atual
+          {ranking.totalConversas} conversas · {ranking.conversasComNota} avaliações na quinzena atual
         </p>
       </div>
 

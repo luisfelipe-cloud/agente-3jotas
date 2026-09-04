@@ -7,11 +7,38 @@ import { createServiceClient } from "@/lib/supabase/server";
 // ao vivo via SQL, não um valor guardado em algum lugar). Se a conversa
 // receber mensagem nova depois, o sync-clint recria a análise normalmente
 // (fluxo de sempre) e ela volta a ser processada do zero.
-export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+//
+// Uma conversa pode ter várias linhas de análise (uma por dia de atividade,
+// ver migration 0040/0042) — sem `?dia=`, apaga só a linha do dia mais
+// recente (preserva o histórico de dias anteriores, mais seguro que apagar
+// tudo de uma vez). Com `?dia=YYYY-MM-DD`, apaga só aquela linha específica
+// (uso do botão de desconsiderar dentro do histórico de dias).
+export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const supabase = createServiceClient();
 
-  const { error } = await supabase.from("analises").delete().eq("conversa_id", id);
+  const diaParam = new URL(req.url).searchParams.get("dia");
+
+  let dia = diaParam;
+  if (!dia) {
+    const { data: maisRecente, error: buscaError } = await supabase
+      .from("analises")
+      .select("dia")
+      .eq("conversa_id", id)
+      .order("dia", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (buscaError) {
+      return NextResponse.json({ ok: false, erro: buscaError.message }, { status: 500 });
+    }
+    if (!maisRecente) {
+      return NextResponse.json({ ok: true });
+    }
+    dia = maisRecente.dia;
+  }
+
+  const { error } = await supabase.from("analises").delete().eq("conversa_id", id).eq("dia", dia);
 
   if (error) {
     return NextResponse.json({ ok: false, erro: error.message }, { status: 500 });

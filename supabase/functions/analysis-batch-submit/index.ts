@@ -10,6 +10,11 @@
 // o status do lote e, quando terminar, já encadeia a submissão do lote de
 // revisão (2º passe) automaticamente, sem precisar de outro cron.
 //
+// Cada rodada avalia só a interação do dia (mensagens do último dia com
+// atividade, ver buscarMensagensDoGrupo) — não o histórico completo do lead.
+// A cada noite a nota da conversa é recalculada do zero com base só no
+// atendimento daquele dia, sem carregar nem penalizar por dias anteriores.
+//
 // Disparo sugerido: pg_cron 1x por noite/madrugada, mesmo CRON_SECRET dos
 // demais crons.
 
@@ -91,11 +96,30 @@ const EH_APRESENTACAO_IA = /sou a (l[ií]via|maria)[,.]?\s*assistente/i;
 
 // Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
 // conversas do mesmo grupo (lead_id + corretor_id), não só a canônica.
+//
+// A avaliação é só da interação MAIS RECENTE, não do histórico inteiro do
+// lead: depois de filtrar template/apresentação-IA/handoff, fica só o dia
+// (fuso America/Sao_Paulo) da última mensagem — cada rodada noturna analisa
+// o atendimento daquele dia isoladamente (pedido: cliente perguntou algo e o
+// corretor respondeu bem naquele dia = nota alta daquele dia, sem carregar
+// nem penalizar por conversas de dias anteriores).
+const FUSO_ANALISE = "America/Sao_Paulo";
+function diaLocal(isoTimestamp: string): string {
+  return new Date(isoTimestamp).toLocaleDateString("en-CA", { timeZone: FUSO_ANALISE });
+}
+
+interface MensagensDoDia {
+  // Dia (fuso America/Sao_Paulo, formato YYYY-MM-DD) da interação mais
+  // recente — vira parte da chave de upsert em `analises` (conversa_id, dia).
+  dia: string;
+  mensagens: Mensagem[];
+}
+
 async function buscarMensagensDoGrupo(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   conversa: Conversa,
-): Promise<Mensagem[]> {
+): Promise<MensagensDoDia | null> {
   const canonicaId = conversa.substituida_por_id ?? conversa.id;
 
   const { data: grupo } = await supabase
@@ -113,7 +137,7 @@ async function buscarMensagensDoGrupo(
     .order("enviada_em", { ascending: true })
     .returns<Mensagem[]>();
 
-  return (todasMensagens ?? []).filter((m) => {
+  const elegiveis = (todasMensagens ?? []).filter((m: Mensagem) => {
     // Mensagem de template do WhatsApp Business (blast automático, não
     // digitado pelo corretor) — sync-clint grava esse placeholder fixo
     // quando o content_type do Clint é TEMPLATE (ver textoMensagem/switch
@@ -129,6 +153,11 @@ async function buscarMensagensDoGrupo(
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });
+
+  if (!elegiveis.length) return null;
+
+  const dia = diaLocal(elegiveis[elegiveis.length - 1].enviada_em);
+  return { dia, mensagens: elegiveis.filter((m: Mensagem) => diaLocal(m.enviada_em) === dia) };
 }
 
 // Mesmo critério das outras functions do pipeline: o critério "playbook" é
@@ -197,9 +226,14 @@ function montarAvaliacaoSchema(parametros: ParametroCriterio[]) {
 
 // Formato "inline request" da Gemini Batch API — um item por conversa, com
 // `metadata.key` = conversa_id pra casar o resultado de volta depois (o
-// Gemini ecoa esse key em cada resposta, confirmado em teste real).
+// Gemini ecoa esse key em cada resposta, confirmado em teste real). `dia`
+// também vai no metadata por conveniência/observabilidade, mas
+// analysis-batch-poll NÃO confia nele pra gravar — recalcula chamando
+// buscarMensagensDoGrupo de novo (não é garantido que o Gemini ecoe campos
+// além de key).
 function montarRequestInline(
   conversaId: string,
+  dia: string,
   mensagens: Mensagem[],
   playbook: string,
   // deno-lint-ignore no-explicit-any
@@ -211,6 +245,12 @@ function montarRequestInline(
 
   const systemPrompt = `Você avalia atendimentos de corretores de crédito imobiliário no WhatsApp.
 
+Você recebe apenas a interação de UM dia específico (não o histórico completo
+do lead). Avalie esse dia isoladamente: se o cliente trouxe uma dúvida ou
+pedido nessa interação e o corretor respondeu bem, isso já é motivo de nota
+alta para este dia, independente de como foram os atendimentos em dias
+anteriores.
+
 Playbooks configurados (técnicas/scripts de referência da imobiliária — não é
 obrigatório que o corretor siga literalmente, mas devem ser usados como apoio
 quando a conversa pede, ver critério "playbook" no schema para o julgamento
@@ -219,29 +259,46 @@ esperado):
 ${playbook}
 """
 
-Avalie a conversa abaixo estritamente contra os critérios do schema. Cite trechos
+Avalie a interação abaixo estritamente contra os critérios do schema. Cite trechos
 literais da conversa como evidência. Não invente informação que não está na conversa.`;
 
   return {
     request: {
       system_instruction: { parts: [{ text: systemPrompt }] },
-      contents: [{ role: "user", parts: [{ text: `Conversa a avaliar:\n\n${transcricao}` }] }],
+      contents: [{ role: "user", parts: [{ text: `Interação do dia a avaliar:\n\n${transcricao}` }] }],
       generationConfig: { responseMimeType: "application/json", responseSchema },
     },
-    metadata: { key: conversaId },
+    metadata: { key: conversaId, dia },
   };
+}
+
+interface ConversaDia {
+  conversa_id: string;
+  dia: string;
 }
 
 // `.in()` com uma lista grande de uuids gera uma URL enorme (~36 chars por
 // id) que já causou erro de protocolo HTTP/2 vindo do Supabase quando o
 // backlog estava grande — atualiza em lotes menores pra não depender do
 // tamanho da lista.
+//
+// Upsert (não update) por (conversa_id, dia): agora pode haver mais de uma
+// linha por conversa (uma por dia de atividade já analisado), então um
+// update filtrando só por conversa_id atingiria todas as linhas históricas
+// da conversa por engano — upsert com a chave composta atinge só a linha do
+// dia certo, criando-a se ainda não existir (ex: primeira vez que essa
+// conversa entra na fila).
 const TAMANHO_LOTE_UPDATE = 100;
 // deno-lint-ignore no-explicit-any
-async function atualizarStatusEmLotes(supabase: any, ids: string[], update: Record<string, unknown>): Promise<void> {
-  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_UPDATE) {
-    const lote = ids.slice(i, i + TAMANHO_LOTE_UPDATE);
-    await supabase.from("analises").update(update).in("conversa_id", lote);
+async function atualizarStatusEmLotesPorDia(supabase: any, pares: ConversaDia[], update: Record<string, unknown>): Promise<void> {
+  for (let i = 0; i < pares.length; i += TAMANHO_LOTE_UPDATE) {
+    const lote = pares.slice(i, i + TAMANHO_LOTE_UPDATE);
+    await supabase
+      .from("analises")
+      .upsert(
+        lote.map((p) => ({ conversa_id: p.conversa_id, dia: p.dia, ...update })),
+        { onConflict: "conversa_id,dia" },
+      );
   }
 }
 
@@ -281,7 +338,12 @@ Deno.serve(async (req) => {
     });
   }
 
-  const conversaIds = pendentes.map((p: { conversa_id: string }) => p.conversa_id);
+  // Dedupe: pode haver mais de uma linha 'pendente' pra mesma conversa (dias
+  // diferentes, ex: sync-clint gravou a fila em noites seguidas antes desta
+  // function rodar) — processamos a conversa uma vez só, recalculando o dia
+  // real via buscarMensagensDoGrupo (que resolve tudo do zero de qualquer
+  // forma, ver limpeza de linhas 'pendente' órfãs mais abaixo).
+  const conversaIds = [...new Set(pendentes.map((p: { conversa_id: string }) => p.conversa_id))];
 
   // Buscar as até 500 conversas de uma vez só com `.in()` gera uma URL
   // gigante (cada uuid ~36 chars) que já derrubou essa function com erro de
@@ -322,14 +384,16 @@ Deno.serve(async (req) => {
 
   const requests: unknown[] = [];
   const semMensagens: string[] = [];
-  const semCorretorHumano: string[] = [];
+  const semCorretorHumano: ConversaDia[] = [];
+  const comRequest: ConversaDia[] = [];
 
   for (const conversa of conversas) {
-    const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
-    if (mensagens.length === 0) {
+    const resultado = await buscarMensagensDoGrupo(supabase, conversa);
+    if (!resultado || resultado.mensagens.length === 0) {
       semMensagens.push(conversa.id);
       continue;
     }
+    const { dia, mensagens } = resultado;
 
     // "100% IA": nenhuma mensagem de corretor tem autor_crm_user_id
     // preenchido — quem atendeu até agora foi só a IA de qualificação
@@ -342,22 +406,52 @@ Deno.serve(async (req) => {
     // os dados mudavam.
     const temCorretorHumano = mensagens.some((m) => m.remetente === "corretor" && m.autor_crm_user_id);
     if (!temCorretorHumano) {
-      semCorretorHumano.push(conversa.id);
+      semCorretorHumano.push({ conversa_id: conversa.id, dia });
       continue;
     }
 
-    requests.push(montarRequestInline(conversa.id, mensagens, playbook, responseSchema));
+    comRequest.push({ conversa_id: conversa.id, dia });
+    requests.push(montarRequestInline(conversa.id, dia, mensagens, playbook, responseSchema));
   }
 
+  // "Sem mensagens" aqui é só o que sobra DEPOIS do filtro de template/vazio/
+  // apresentação-IA/handoff — ou seja, não é erro técnico, é a mesma
+  // categoria de "não teve atendimento humano real ainda" que semCorretorHumano
+  // já cobre (ex: dia em que só rodou blast automático do WhatsApp Business,
+  // sem nenhuma mensagem real de corretor ou lead). 'falhou' é reservado pra
+  // problema técnico de verdade (erro de parsing, resposta ausente do
+  // Gemini) — misturar os dois dificultava enxergar o que precisa de atenção
+  // de fato. Não tem "dia" calculável (não sobrou mensagem nenhuma pra achar
+  // o dia mais recente) — usa hoje só como chave de upsert, mesma convenção
+  // do sync-clint pra linhas sem interação real ainda.
   if (semMensagens.length) {
-    await atualizarStatusEmLotes(supabase, semMensagens, { status: "falhou", erro: "conversa sem mensagens" });
+    const hoje = diaLocal(new Date().toISOString());
+    await atualizarStatusEmLotesPorDia(
+      supabase,
+      semMensagens.map((id) => ({ conversa_id: id, dia: hoje })),
+      { status: "nao_elegivel", erro: "sem mensagens reais no período (só template/apresentação automática, sem interação humana)" },
+    );
   }
 
   if (semCorretorHumano.length) {
-    await atualizarStatusEmLotes(supabase, semCorretorHumano, {
+    await atualizarStatusEmLotesPorDia(supabase, semCorretorHumano, {
       status: "nao_elegivel",
       erro: "100% IA de qualificação (Lívia/Maria) — corretor ainda não engajou",
     });
+  }
+
+  // Limpa possíveis linhas 'pendente' órfãs da mesma conversa com um `dia`
+  // diferente do calculado agora (ex: sync-clint gravou a fila com "hoje",
+  // mas a última atividade real é de ontem) — evita acumular lixo de fila
+  // que nunca seria retomado (nada mais aponta pra essas linhas).
+  const todosOsPares = [...comRequest, ...semCorretorHumano];
+  for (const par of todosOsPares) {
+    await supabase
+      .from("analises")
+      .delete()
+      .eq("conversa_id", par.conversa_id)
+      .eq("status", "pendente")
+      .neq("dia", par.dia);
   }
 
   if (!requests.length) {
@@ -401,8 +495,13 @@ Deno.serve(async (req) => {
     });
   }
 
-  const idsEnviados = conversas.filter((c) => !semMensagens.includes(c.id)).map((c) => c.id);
-  await atualizarStatusEmLotes(supabase, idsEnviados, { status: "processando", batch_id: registroBatch.id });
+  // comRequest já é exatamente quem tem request real no lote (bug corrigido
+  // aqui antes: um filtro esquecia de excluir semCorretorHumano e sobrescrevia
+  // 'nao_elegivel' pra 'processando' mesmo sem request nenhum enviado —
+  // deixava a análise presa em 'processando' pra sempre, já que o poll nunca
+  // via aquele conversa_id na resposta do Gemini e sync-clint não mexe em
+  // conversas 'processando' — evita brigar com análise em andamento).
+  await atualizarStatusEmLotesPorDia(supabase, comRequest, { status: "processando", batch_id: registroBatch.id });
 
   return new Response(
     JSON.stringify({

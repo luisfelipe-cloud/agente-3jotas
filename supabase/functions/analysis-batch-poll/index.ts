@@ -89,14 +89,6 @@ async function buscarEmLotes<T>(supabase: any, tabela: string, colunas: string, 
   return resultado;
 }
 
-// deno-lint-ignore no-explicit-any
-async function atualizarEmLotes(supabase: any, tabela: string, coluna: string, ids: string[], update: Record<string, unknown>): Promise<void> {
-  for (let i = 0; i < ids.length; i += TAMANHO_LOTE_IN) {
-    const lote = ids.slice(i, i + TAMANHO_LOTE_IN);
-    await supabase.from(tabela).update(update).in(coluna, lote);
-  }
-}
-
 const ETAPA_LABEL: Record<EtapaPlaybook, string> = {
   primeiro_contato: "1º Contato",
   envio_simulacao: "Envio de Simulação",
@@ -115,11 +107,28 @@ const EH_APRESENTACAO_IA = /sou a (l[ií]via|maria)[,.]?\s*assistente/i;
 
 // Ver consolidarPorLead em sync-clint — junta as mensagens de todas as
 // conversas do mesmo grupo (lead_id + corretor_id), não só a canônica.
+//
+// A avaliação (1º passe e revisão) é só da interação MAIS RECENTE, não do
+// histórico inteiro do lead — ver mesmo comentário em analysis-batch-submit.
+// Precisa ser a MESMA janela de dia nos dois passes, senão a revisão
+// releria mensagens diferentes das que embasaram a nota original.
+const FUSO_ANALISE = "America/Sao_Paulo";
+function diaLocal(isoTimestamp: string): string {
+  return new Date(isoTimestamp).toLocaleDateString("en-CA", { timeZone: FUSO_ANALISE });
+}
+
+interface MensagensDoDia {
+  // Dia (fuso America/Sao_Paulo, formato YYYY-MM-DD) da interação mais
+  // recente — vira parte da chave de upsert em `analises` (conversa_id, dia).
+  dia: string;
+  mensagens: Mensagem[];
+}
+
 async function buscarMensagensDoGrupo(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   conversa: Conversa,
-): Promise<Mensagem[]> {
+): Promise<MensagensDoDia | null> {
   const canonicaId = conversa.substituida_por_id ?? conversa.id;
 
   const { data: grupo } = await supabase
@@ -137,12 +146,17 @@ async function buscarMensagensDoGrupo(
     .order("enviada_em", { ascending: true })
     .returns<Mensagem[]>();
 
-  return (todasMensagens ?? []).filter((m) => {
+  const elegiveis = (todasMensagens ?? []).filter((m: Mensagem) => {
     if (EH_CONTEUDO_VAZIO.test(m.texto)) return false;
     if (m.remetente === "corretor" && EH_APRESENTACAO_IA.test(m.texto)) return false;
     const handoff = handoffPorConversa.get(m.conversa_id);
     return !handoff || m.enviada_em > handoff;
   });
+
+  if (!elegiveis.length) return null;
+
+  const dia = diaLocal(elegiveis[elegiveis.length - 1].enviada_em);
+  return { dia, mensagens: elegiveis.filter((m: Mensagem) => diaLocal(m.enviada_em) === dia) };
 }
 
 async function buscarPlaybooksAtivos(
@@ -199,10 +213,11 @@ function montarRevisaoSchema(parametrosAtivos: ParametroCriterio[]) {
 }
 
 // deno-lint-ignore no-explicit-any
-function montarUpsertAnalise(conversaId: string, resultado: Record<string, any>, loteId: string) {
+function montarUpsertAnalise(conversaId: string, dia: string, resultado: Record<string, any>, loteId: string) {
   // deno-lint-ignore no-explicit-any
   const upsert: Record<string, any> = {
     conversa_id: conversaId,
+    dia,
     status: "concluida" as const,
     justificativa_geral: resultado.justificativa_geral,
     modelo_usado: MODEL,
@@ -228,10 +243,11 @@ function montarUpsertAnalise(conversaId: string, resultado: Record<string, any>,
 }
 
 // deno-lint-ignore no-explicit-any
-function montarUpsertBruta(conversaId: string, resultado: Record<string, any>) {
+function montarUpsertBruta(conversaId: string, dia: string, resultado: Record<string, any>) {
   // deno-lint-ignore no-explicit-any
   const upsert: Record<string, any> = {
     conversa_id: conversaId,
+    dia,
     justificativa_geral: resultado.justificativa_geral,
     modelo_usado: MODEL,
   };
@@ -248,10 +264,11 @@ function montarUpsertBruta(conversaId: string, resultado: Record<string, any>) {
 }
 
 // deno-lint-ignore no-explicit-any
-function montarUpsertRevisao(conversaId: string, revisao: Record<string, any>, ativos: ParametroCriterio[], loteId: string) {
+function montarUpsertRevisao(conversaId: string, dia: string, revisao: Record<string, any>, ativos: ParametroCriterio[], loteId: string) {
   // deno-lint-ignore no-explicit-any
   const upsert: Record<string, any> = {
     conversa_id: conversaId,
+    dia,
     revisado: true,
     revisado_em: new Date().toISOString(),
     resumo_revisao: revisao.resumo_revisao ?? null,
@@ -270,9 +287,44 @@ function montarUpsertRevisao(conversaId: string, revisao: Record<string, any>, a
 }
 
 interface ItemResultado {
-  metadata?: { key?: string };
+  metadata?: { key?: string; dia?: string };
   response?: { candidates?: { content?: { parts?: { text?: string }[] } }[] };
   error?: unknown;
+}
+
+// Confirmado em produção que a Gemini Batch API ecoa o metadata inteiro
+// (não só `key`) — usa item.metadata.dia direto, sem query nenhuma. Só cai
+// no recálculo (1-2 queries) se por algum motivo vier ausente — isso evita
+// o gargalo de fazer uma consulta ao banco por item do lote: com lotes de
+// 100-300+ itens, resolver o dia sempre via query sequencial estourava o
+// timeout da function e deixava o lote preso em 'in_progress' pra sempre
+// (o poll nunca terminava de processar os itens, então nunca marcava o
+// batch como 'ended').
+async function resolverDiaDaConversa(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  conversaId: string,
+): Promise<string | null> {
+  const { data: conversa } = await supabase
+    .from("conversas")
+    .select("id, lead_id, corretor_id, etapa_playbook, humano_assumiu_em, substituida_por_id")
+    .eq("id", conversaId)
+    .maybeSingle<Conversa>();
+
+  if (!conversa) return null;
+
+  const resultado = await buscarMensagensDoGrupo(supabase, conversa);
+  return resultado?.dia ?? null;
+}
+
+async function resolverDia(
+  // deno-lint-ignore no-explicit-any
+  supabase: any,
+  item: ItemResultado,
+  conversaId: string,
+): Promise<string | null> {
+  if (item.metadata?.dia) return item.metadata.dia;
+  return resolverDiaDaConversa(supabase, conversaId);
 }
 
 Deno.serve(async (req) => {
@@ -342,17 +394,30 @@ Deno.serve(async (req) => {
       let errored = 0;
 
       if (lote.tipo === "analise") {
-        const idsConcluidos: string[] = [];
+        const analisesOk: { conversa_id: string; dia: string }[] = [];
 
         for (const item of itens) {
           const conversaId = item.metadata?.key;
           if (!conversaId) continue;
 
+          const dia = await resolverDia(supabase, item, conversaId);
+          if (!dia) {
+            // Sem mensagens elegíveis mais (ex: conversa foi limpa/alterada
+            // entre o submit e agora) — usa hoje só como chave de upsert,
+            // mesma convenção do submit.
+            await supabase.from("analises").upsert(
+              { conversa_id: conversaId, dia: diaLocal(new Date().toISOString()), status: "falhou", erro: "conversa sem mensagens elegíveis no momento do poll", batch_id: lote.id },
+              { onConflict: "conversa_id,dia" },
+            );
+            errored++;
+            continue;
+          }
+
           const texto = item.response?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!texto) {
             await supabase.from("analises").upsert(
-              { conversa_id: conversaId, status: "falhou", erro: `sem resposta no lote: ${JSON.stringify(item.error ?? "desconhecido")}`, batch_id: lote.id },
-              { onConflict: "conversa_id" },
+              { conversa_id: conversaId, dia, status: "falhou", erro: `sem resposta no lote: ${JSON.stringify(item.error ?? "desconhecido")}`, batch_id: lote.id },
+              { onConflict: "conversa_id,dia" },
             );
             errored++;
             continue;
@@ -360,14 +425,14 @@ Deno.serve(async (req) => {
 
           try {
             const resultado = JSON.parse(texto);
-            await supabase.from("analises").upsert(montarUpsertAnalise(conversaId, resultado, lote.id), { onConflict: "conversa_id" });
-            await supabase.from("analises_bruta").upsert(montarUpsertBruta(conversaId, resultado), { onConflict: "conversa_id" });
-            idsConcluidos.push(conversaId);
+            await supabase.from("analises").upsert(montarUpsertAnalise(conversaId, dia, resultado, lote.id), { onConflict: "conversa_id,dia" });
+            await supabase.from("analises_bruta").upsert(montarUpsertBruta(conversaId, dia, resultado), { onConflict: "conversa_id,dia" });
+            analisesOk.push({ conversa_id: conversaId, dia });
             succeeded++;
           } catch (err) {
             await supabase.from("analises").upsert(
-              { conversa_id: conversaId, status: "falhou", erro: `parsing: ${err instanceof Error ? err.message : String(err)}`, batch_id: lote.id },
-              { onConflict: "conversa_id" },
+              { conversa_id: conversaId, dia, status: "falhou", erro: `parsing: ${err instanceof Error ? err.message : String(err)}`, batch_id: lote.id },
+              { onConflict: "conversa_id,dia" },
             );
             errored++;
           }
@@ -375,8 +440,8 @@ Deno.serve(async (req) => {
 
         // Encadeia o 2º passe automaticamente — sem depender de nenhum cron
         // separado pra revisão acontecer.
-        if (idsConcluidos.length) {
-          await submeterLoteRevisao(supabase, apiKey, idsConcluidos);
+        if (analisesOk.length) {
+          await submeterLoteRevisao(supabase, apiKey, analisesOk);
         }
       } else {
         // tipo === "revisao"
@@ -387,17 +452,24 @@ Deno.serve(async (req) => {
           const conversaId = item.metadata?.key;
           if (!conversaId) continue;
 
+          const dia = await resolverDia(supabase, item, conversaId);
+          if (!dia) {
+            errored++;
+            continue;
+          }
+
           const texto = item.response?.candidates?.[0]?.content?.parts?.[0]?.text;
           if (!texto) {
             await supabase.from("analises").upsert(
               {
                 conversa_id: conversaId,
+                dia,
                 revisado: true,
                 revisado_em: new Date().toISOString(),
                 resumo_revisao: "Não revisada: sem resposta no lote de revisão.",
                 batch_id: lote.id,
               },
-              { onConflict: "conversa_id" },
+              { onConflict: "conversa_id,dia" },
             );
             errored++;
             continue;
@@ -405,18 +477,19 @@ Deno.serve(async (req) => {
 
           try {
             const revisao = JSON.parse(texto);
-            await supabase.from("analises").upsert(montarUpsertRevisao(conversaId, revisao, ativos, lote.id), { onConflict: "conversa_id" });
+            await supabase.from("analises").upsert(montarUpsertRevisao(conversaId, dia, revisao, ativos, lote.id), { onConflict: "conversa_id,dia" });
             succeeded++;
           } catch (err) {
             await supabase.from("analises").upsert(
               {
                 conversa_id: conversaId,
+                dia,
                 revisado: true,
                 revisado_em: new Date().toISOString(),
                 resumo_revisao: `Não revisada: parsing falhou (${err instanceof Error ? err.message : String(err)}).`,
                 batch_id: lote.id,
               },
-              { onConflict: "conversa_id" },
+              { onConflict: "conversa_id,dia" },
             );
             errored++;
           }
@@ -452,8 +525,11 @@ async function submeterLoteRevisao(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   apiKey: string,
-  conversaIds: string[],
+  concluidos: { conversa_id: string; dia: string }[],
 ): Promise<void> {
+  const conversaIds = concluidos.map((c) => c.conversa_id);
+  const diaPorConversa = new Map(concluidos.map((c) => [c.conversa_id, c.dia]));
+
   const conversas = await buscarEmLotes<Conversa>(
     supabase,
     "conversas",
@@ -464,9 +540,14 @@ async function submeterLoteRevisao(
 
   if (!conversas.length) return;
 
+  // Uma conversa pode ter várias linhas em analises_bruta (uma por dia já
+  // processado historicamente) — chave composta pra pegar só a do dia que
+  // acabou de sair do 1º passe, não uma linha antiga de outro dia.
   // deno-lint-ignore no-explicit-any
   const brutas = await buscarEmLotes<any>(supabase, "analises_bruta", "*", "conversa_id", conversaIds);
-  const brutaPorConversa = new Map((brutas ?? []).map((b: { conversa_id: string }) => [b.conversa_id, b]));
+  const brutaPorConversaEDia = new Map(
+    (brutas ?? []).map((b: { conversa_id: string; dia: string }) => [`${b.conversa_id}|${b.dia}`, b]),
+  );
 
   const parametros = await buscarParametrosAtivos(supabase);
   const ativos = parametros.filter((p) => p.ativo);
@@ -479,18 +560,28 @@ async function submeterLoteRevisao(
   const semBruta: string[] = [];
 
   for (const conversa of conversas) {
+    const dia = diaPorConversa.get(conversa.id);
+    if (!dia) {
+      semBruta.push(conversa.id);
+      continue;
+    }
+
     // deno-lint-ignore no-explicit-any
-    const bruta = brutaPorConversa.get(conversa.id) as any;
+    const bruta = brutaPorConversaEDia.get(`${conversa.id}|${dia}`) as any;
     if (!bruta) {
       semBruta.push(conversa.id);
       continue;
     }
 
-    const mensagens = await buscarMensagensDoGrupo(supabase, conversa);
-    if (!mensagens.length) {
+    const resultado = await buscarMensagensDoGrupo(supabase, conversa);
+    if (!resultado || resultado.dia !== dia || !resultado.mensagens.length) {
+      // Última atividade mudou entre o 1º passe e agora (ex: chegou mensagem
+      // nova nesse meio-tempo) — deixa pra próxima rodada tratar o dia novo,
+      // não revisa com mensagens que não batem com a avaliação original.
       semBruta.push(conversa.id);
       continue;
     }
+    const { mensagens } = resultado;
 
     const avaliacaoOriginal = ativos
       .map((p) => {
@@ -524,19 +615,20 @@ ${playbook}
 A primeira avaliação (feita critério a critério, isoladamente) resultou em:
 ${avaliacaoOriginal}
 
-Releia a conversa completa abaixo prestando atenção a nuances que uma avaliação
-isolada por critério pode perder: ironia ou sarcasmo, o corretor recuperando
-uma falha mais tarde na conversa, gírias e expressões regionais, mudança de
-tom do lead ao longo do atendimento, contexto que só faz sentido lendo tudo
-junto. Ajuste a nota, evidência e justificativa de cada critério apenas onde a
-avaliação original estiver de fato equivocada — mantenha a nota original
-quando ela já estiver correta, mesmo que a evidência citada não seja o único
-trecho relevante. Não mude uma nota só para ser diferente da original.`;
+Releia abaixo a interação deste dia específico prestando atenção a nuances que
+uma avaliação isolada por critério pode perder: ironia ou sarcasmo, o corretor
+recuperando uma falha mais tarde na mesma interação, gírias e expressões
+regionais, mudança de tom do lead ao longo do atendimento, contexto que só faz
+sentido lendo tudo junto. Ajuste a nota, evidência e justificativa de cada
+critério apenas onde a avaliação original estiver de fato equivocada — mantenha
+a nota original quando ela já estiver correta, mesmo que a evidência citada não
+seja o único trecho relevante. Não mude uma nota só para ser diferente da
+original.`;
 
     requests.push({
       request: {
         system_instruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: "user", parts: [{ text: `Conversa completa:\n\n${transcricao}` }] }],
+        contents: [{ role: "user", parts: [{ text: `Interação do dia:\n\n${transcricao}` }] }],
         generationConfig: { responseMimeType: "application/json", responseSchema },
       },
       metadata: { key: conversa.id },
@@ -545,13 +637,20 @@ trecho relevante. Não mude uma nota só para ser diferente da original.`;
 
   if (semBruta.length) {
     await supabase.from("analises").upsert(
-      semBruta.map((id) => ({
-        conversa_id: id,
-        revisado: true,
-        revisado_em: new Date().toISOString(),
-        resumo_revisao: "Não revisada: sem análise crua ou mensagens pra revisar.",
-      })),
-      { onConflict: "conversa_id" },
+      semBruta
+        .map((id) => {
+          const dia = diaPorConversa.get(id);
+          if (!dia) return null;
+          return {
+            conversa_id: id,
+            dia,
+            revisado: true,
+            revisado_em: new Date().toISOString(),
+            resumo_revisao: "Não revisada: sem análise crua ou mensagens pra revisar.",
+          };
+        })
+        .filter((row): row is NonNullable<typeof row> => row !== null),
+      { onConflict: "conversa_id,dia" },
     );
   }
 
@@ -582,7 +681,17 @@ trecho relevante. Não mude uma nota só para ser diferente da original.`;
     .single();
 
   if (registroBatch) {
-    const idsComRequest = conversas.filter((c) => !semBruta.includes(c.id)).map((c) => c.id);
-    await atualizarEmLotes(supabase, "analises", "conversa_id", idsComRequest, { batch_id: registroBatch.id });
+    // Upsert (não update) por (conversa_id, dia): um update filtrando só por
+    // conversa_id atingiria todas as linhas históricas da conversa (uma por
+    // dia já analisado antes), não só a linha do dia que está entrando
+    // nesse lote de revisão.
+    const paresComRequest = conversas
+      .filter((c) => !semBruta.includes(c.id))
+      .map((c) => ({ conversa_id: c.id, dia: diaPorConversa.get(c.id)!, batch_id: registroBatch.id }));
+
+    for (let i = 0; i < paresComRequest.length; i += TAMANHO_LOTE_IN) {
+      const lote = paresComRequest.slice(i, i + TAMANHO_LOTE_IN);
+      await supabase.from("analises").upsert(lote, { onConflict: "conversa_id,dia" });
+    }
   }
 }

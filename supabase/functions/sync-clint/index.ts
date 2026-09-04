@@ -436,9 +436,12 @@ async function consolidarPorLead(
 
   for (const antiga of grupo.slice(1)) {
     await supabase.from("conversas").update({ substituida_por_id: canonicaId }).eq("id", antiga.id);
-    await supabase
-      .from("analises")
-      .upsert({ conversa_id: antiga.id, status: "consolidada" }, { onConflict: "conversa_id" });
+    // update (não upsert): marca 'consolidada' em TODAS as linhas existentes
+    // dessa conversa (uma por dia já analisado) — um upsert com chave
+    // composta criaria uma linha nova com dia arbitrário em vez de marcar as
+    // que já existem. Se a conversa antiga não tiver nenhuma linha em
+    // analises ainda, não há o que consolidar (nada a fazer).
+    await supabase.from("analises").update({ status: "consolidada" }).eq("conversa_id", antiga.id);
   }
 
   return canonicaId === conversaId;
@@ -508,24 +511,39 @@ async function atualizarHandoffIA(
   if (error) throw new Error(`marcar humano_assumiu_em falhou: ${error.message}`);
 }
 
+// Dia (fuso America/Sao_Paulo) usado como chave de fila em `analises` — só
+// um sinalizador de "tem conversa esperando processamento", não o dia real
+// da análise: analysis-batch-submit recalcula o dia de atividade mais
+// recente do zero (buscarMensagensDoGrupo) e é ele quem decide a chave
+// definitiva de upsert. Usar sempre "hoje" aqui evita ter que reimplementar
+// aquela lógica de "último dia com atividade" também no sync.
+const FUSO_ANALISE = "America/Sao_Paulo";
+function diaLocal(isoTimestamp: string): string {
+  return new Date(isoTimestamp).toLocaleDateString("en-CA", { timeZone: FUSO_ANALISE });
+}
+
 // Só entra na fila de análise quando a conversa atinge o mínimo de interação
 // (regra definida em `elegivel_para_analise`, hoje: 3+ mensagens, 2+ do lead).
 // Chamada só quando chegaram mensagens novas nesta sincronização (ver
 // `sincronizarChat`) — por isso reabre pra 'pendente' mesmo se já estava
 // 'concluida'/'falhou': uma conversa que continua depois de já analisada
-// precisa ser relida por inteiro (contexto completo) pra IA considerar as
+// precisa ser relida (a interação do dia mais recente) pra IA considerar as
 // mensagens novas, senão elas nunca entram em análise nenhuma. Só não mexe
-// se já está 'processando' agora mesmo, pra não brigar com uma análise em
-// andamento.
+// se a linha de HOJE já está 'processando' agora mesmo, pra não brigar com
+// uma análise em andamento (uma conversa pode ter várias linhas históricas,
+// uma por dia já analisado — só a de hoje importa aqui).
 async function atualizarStatusAnalise(
   // deno-lint-ignore no-explicit-any
   supabase: any,
   conversaId: string,
 ): Promise<void> {
+  const hoje = diaLocal(new Date().toISOString());
+
   const { data: existente } = await supabase
     .from("analises")
     .select("status")
     .eq("conversa_id", conversaId)
+    .eq("dia", hoje)
     .maybeSingle();
 
   if (existente?.status === "processando") return;
@@ -534,7 +552,7 @@ async function atualizarStatusAnalise(
 
   await supabase
     .from("analises")
-    .upsert({ conversa_id: conversaId, status: elegivel ? "pendente" : "nao_elegivel" }, { onConflict: "conversa_id" });
+    .upsert({ conversa_id: conversaId, dia: hoje, status: elegivel ? "pendente" : "nao_elegivel" }, { onConflict: "conversa_id,dia" });
 }
 
 function mapearRemetente(tipo: ClintMessage["type"]): "corretor" | "lead" | null {
