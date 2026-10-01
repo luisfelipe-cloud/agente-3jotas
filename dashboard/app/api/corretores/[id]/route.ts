@@ -4,7 +4,7 @@ import { getDashboardSession } from "@/lib/session";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getDashboardSession();
-  if (session?.role === "corretor") {
+  if (session?.role !== "admin") {
     return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 
@@ -33,7 +33,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 // (FK on delete cascade) — irreversível quando já existe histórico real.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getDashboardSession();
-  if (session?.role === "corretor") {
+  if (session?.role !== "admin") {
     return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 

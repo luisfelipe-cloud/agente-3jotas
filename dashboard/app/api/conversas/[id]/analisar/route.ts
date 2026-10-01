@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getDashboardSession } from "@/lib/session";
 
 // Aciona a Edge Function analisar-conversa-unica sob demanda (botão
 // "Analisar conversa"). Serve tanto pra não esperar o lote noturno quanto de
@@ -8,6 +9,7 @@ import { NextResponse } from "next/server";
 // O CRON_SECRET fica só no servidor (nunca em NEXT_PUBLIC_*) — o browser
 // chama esta route, que repassa a chamada autenticada.
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const { id } = await params;
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const cronSecret = process.env.CRON_SECRET;

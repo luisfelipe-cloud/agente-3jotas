@@ -47,7 +47,7 @@ export default async function CorretoresPage({
 
       <PeriodoCorretoresFiltro />
 
-      <CorretoresManager ranking={ranking} />
+      <CorretoresManager ranking={ranking} podeGerenciar={session?.role === "admin"} />
     </div>
   );
 }

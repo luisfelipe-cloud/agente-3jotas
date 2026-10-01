@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 // POST — cria um novo script de playbook. Vários podem estar ativos ao
 // mesmo tempo (inclusive da mesma etapa) — o critério "playbook" já avalia
 // juntando todos os ativos como referência, não é mais 1 por etapa.
 export async function POST(req: Request) {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const body = await req.json();
 
   if (typeof body.etapa !== "string" || typeof body.conteudo !== "string") {

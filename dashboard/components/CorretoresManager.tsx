@@ -35,7 +35,7 @@ function iniciais(nome: string) {
     .join("");
 }
 
-export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
+export function CorretoresManager({ ranking, podeGerenciar }: { ranking: CorretorRanking[]; podeGerenciar: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   // Preserva o período selecionado na lista ao entrar na página do corretor —
@@ -146,12 +146,12 @@ export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
         <p className="text-sm text-text-secondary">
           {ranking.length} corretor{ranking.length === 1 ? "" : "es"} cadastrado{ranking.length === 1 ? "" : "s"}
         </p>
-        <div className="flex items-center gap-2">
+        {podeGerenciar && <div className="flex items-center gap-2">
           <SincronizarButton />
           <IconButton label="Novo corretor" onClick={iniciarCriacao}>
             <IconPlus />
           </IconButton>
-        </div>
+        </div>}
       </div>
 
       {erro && <p className="text-sm text-error">{erro}</p>}
@@ -209,12 +209,12 @@ export function CorretoresManager({ ranking }: { ranking: CorretorRanking[] }) {
                     </p>
                   </div>
                 </div>
-                <KebabMenu
+                {podeGerenciar && <KebabMenu
                   items={[
                     { label: "Editar", onClick: () => iniciarEdicao(r) },
                     { label: "Excluir", onClick: () => setExcluindo(r), tone: "danger" },
                   ]}
-                />
+                />}
               </div>
 
               <div className="space-y-2.5">

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ criterio: string }> }) {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const { criterio } = await params;
   const body = await req.json();
 

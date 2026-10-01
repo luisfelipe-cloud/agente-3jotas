@@ -9,6 +9,7 @@ export async function DELETE(_req: Request, { params }: { params: Promise<{ camp
   const supabase = createServiceClient();
 
   const session = await getDashboardSession();
+  if (!session || session.role === "pendente") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   if (session?.role === "corretor") {
     const { data: campanha } = await supabase
       .from("campanhas_reativacao")

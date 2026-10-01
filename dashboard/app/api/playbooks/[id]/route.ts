@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 // PATCH — atualiza etapa/conteudo/ativo de um script. Vários podem estar
 // ativos ao mesmo tempo (inclusive da mesma etapa) — não desativa mais os
 // demais ao ativar um.
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const { id } = await params;
   const body = await req.json();
 
@@ -30,6 +32,7 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
 
 // DELETE — remove o script. Sem cascata: playbooks não têm FK apontando pra eles.
 export async function DELETE(_req: Request, { params }: { params: Promise<{ id: string }> }) {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const { id } = await params;
   const supabase = createServiceClient();
 

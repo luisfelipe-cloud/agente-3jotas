@@ -1,8 +1,12 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { mapParametroCriterio, mapPlaybookScript } from "@/lib/mappers";
 import { ConfiguracoesTabs } from "@/components/ConfiguracoesTabs";
+import { getDashboardSession } from "@/lib/session";
+import { notFound } from "next/navigation";
 
 export default async function ConfiguracoesPage() {
+  const session = await getDashboardSession();
+  if (session?.role !== "admin") notFound();
   const supabase = createServiceClient();
 
   const [

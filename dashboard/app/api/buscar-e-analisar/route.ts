@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getDashboardSession } from "@/lib/session";
 
 export const maxDuration = 300;
 
@@ -51,6 +52,7 @@ async function chamarFuncao(supabaseUrl: string, cronSecret: string, nome: strin
 }
 
 export async function POST() {
+  if ((await getDashboardSession())?.role !== "admin") return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const cronSecret = process.env.CRON_SECRET;
 

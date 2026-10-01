@@ -13,6 +13,7 @@ const TABS_ADMIN = [
   { href: "/reativacao-base", label: "Reativação", Icon: IconPhoneCall },
   { href: "/configuracoes", label: "Configurações", Icon: IconSettings },
 ];
+const TABS_GESTOR = TABS_ADMIN.filter((tab) => tab.href !== "/configuracoes");
 
 function tabsParaSessao(session: DashboardSession | null) {
   if (session?.role === "corretor") {
@@ -23,7 +24,7 @@ function tabsParaSessao(session: DashboardSession | null) {
   }
   // Fail-closed: sessão nula (não deve acontecer dentro do grupo (app),
   // já garantido pelo proxy.ts) não mostra tabs extras em vez de assumir admin.
-  return session?.role === "admin" ? TABS_ADMIN : [];
+  return session?.role === "admin" ? TABS_ADMIN : session?.role === "gestor" ? TABS_GESTOR : [];
 }
 
 export function NavSidebar({ userEmail, session }: { userEmail: string | null; session: DashboardSession | null }) {

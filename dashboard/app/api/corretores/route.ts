@@ -4,7 +4,7 @@ import { getDashboardSession } from "@/lib/session";
 
 export async function POST(req: Request) {
   const session = await getDashboardSession();
-  if (session?.role === "corretor") {
+  if (session?.role !== "admin") {
     return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 

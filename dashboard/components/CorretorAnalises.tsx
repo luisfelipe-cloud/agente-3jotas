@@ -28,6 +28,7 @@ interface InsightCorretor {
 export function CorretorAnalises({
   conversas,
   insight,
+  podeDesconsiderarAnalise,
   corretorId,
   corretorNome,
   periodo,
@@ -36,6 +37,7 @@ export function CorretorAnalises({
 }: {
   conversas: ConversaAnalisada[];
   insight: InsightCorretor | null;
+  podeDesconsiderarAnalise: boolean;
   corretorId: string;
   corretorNome: string;
   periodo: { inicio: string; fim: string };
@@ -227,6 +229,7 @@ export function CorretorAnalises({
                   <ConversaCard
                     key={conversa.conversaId}
                     conversa={conversa}
+                    podeDesconsiderarAnalise={podeDesconsiderarAnalise}
                     corretorId={corretorId}
                     corretorNome={corretorNome}
                     periodo={periodo}
@@ -255,6 +258,7 @@ export function CorretorAnalises({
                     <ConversaCard
                       key={conversa.conversaId}
                       conversa={conversa}
+                      podeDesconsiderarAnalise={podeDesconsiderarAnalise}
                       corretorId={corretorId}
                       corretorNome={corretorNome}
                       periodo={periodo}
@@ -332,6 +336,7 @@ const STATUS_LABEL: Record<ConversaAnalisada["status"], string> = {
 
 function ConversaCard({
   conversa,
+  podeDesconsiderarAnalise,
   corretorId,
   corretorNome,
   periodo,
@@ -341,6 +346,7 @@ function ConversaCard({
   onErro,
 }: {
   conversa: ConversaAnalisada;
+  podeDesconsiderarAnalise: boolean;
   corretorId: string;
   corretorNome: string;
   periodo: { inicio: string; fim: string };
@@ -370,6 +376,7 @@ function ConversaCard({
   }
 
   async function confirmarDesconsiderar() {
+    if (!podeDesconsiderarAnalise) return;
     setDesconsiderando(true);
     try {
       const resp = await fetch(`/api/conversas/${conversa.conversaId}/analise`, { method: "DELETE" }).then((r) => r.json());
@@ -529,12 +536,14 @@ function ConversaCard({
                 })}
               </div>
               <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setConfirmandoDesconsiderar(true)}
-                  className="text-sm font-medium text-error hover:underline"
-                >
-                  Desconsiderar análise
-                </button>
+                {podeDesconsiderarAnalise && (
+                  <button
+                    onClick={() => setConfirmandoDesconsiderar(true)}
+                    className="text-sm font-medium text-error hover:underline"
+                  >
+                    Desconsiderar análise
+                  </button>
+                )}
                 {conversa.historicoAnalises.length > 1 && (
                   <button
                     onClick={() => setHistoricoAberto((v) => !v)}
@@ -578,7 +587,7 @@ function ConversaCard({
 
       <ChatModal open={chatAberto} onClose={() => setChatAberto(false)} conversa={conversa} corretorNome={corretorNome} />
 
-      {confirmandoDesconsiderar && (
+      {podeDesconsiderarAnalise && confirmandoDesconsiderar && (
         <ConfirmModal
           titulo="Desconsiderar análise"
           mensagem="Isso apaga a análise dessa conversa (nota e justificativas) e recalcula a média do corretor sem ela. Use quando a IA avaliou incorretamente. Se a conversa receber mensagem nova depois, ela volta a ser analisada normalmente. Essa ação não pode ser desfeita."

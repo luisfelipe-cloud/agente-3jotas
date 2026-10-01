@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceClient } from "@/lib/supabase/server";
+import { getDashboardSession } from "@/lib/session";
 
 // Botão "Desconsiderar análise" — exclui a análise de vez (não é só um
 // status "desconsiderada"): a nota some do banco, corretor_ranking e as
@@ -14,6 +15,11 @@ import { createServiceClient } from "@/lib/supabase/server";
 // tudo de uma vez). Com `?dia=YYYY-MM-DD`, apaga só aquela linha específica
 // (uso do botão de desconsiderar dentro do histórico de dias).
 export async function DELETE(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const session = await getDashboardSession();
+  if (session?.role !== "admin") {
+    return NextResponse.json({ ok: false, erro: "Apenas administradores podem desconsiderar análises." }, { status: 403 });
+  }
+
   const { id } = await params;
   const supabase = createServiceClient();
 

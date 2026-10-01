@@ -24,7 +24,7 @@ async function buscarUsuarioPorEmail(supabase: ReturnType<typeof createServiceCl
 
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const session = await getDashboardSession();
-  if (session?.role === "corretor") {
+  if (session?.role !== "admin") {
     return NextResponse.json({ ok: false, erro: "Não autorizado" }, { status: 403 });
   }
 
@@ -56,6 +56,13 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
     }
 
     authUserId = usuario.id;
+    const { data: permissao, error: permissaoError } = await supabase
+      .from("usuarios_permissoes")
+      .select("papel")
+      .eq("auth_user_id", authUserId)
+      .maybeSingle();
+    if (permissaoError) return NextResponse.json({ ok: false, erro: permissaoError.message }, { status: 500 });
+    if (permissao) return NextResponse.json({ ok: false, erro: "Remova a permissão de administrador/gestor antes de vincular este email a um corretor." }, { status: 409 });
   }
 
   const { error } = await supabase.from("corretores").update({ auth_user_id: authUserId }).eq("id", id);

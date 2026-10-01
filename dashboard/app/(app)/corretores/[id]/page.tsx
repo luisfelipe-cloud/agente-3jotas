@@ -181,6 +181,7 @@ export default async function CorretorPage({
       <CorretorAnalises
         conversas={conversas}
         insight={insight ?? null}
+        podeDesconsiderarAnalise={session?.role === "admin"}
         corretorId={id}
         corretorNome={ranking.corretor.nome_crm}
         periodo={{ inicio, fim }}
