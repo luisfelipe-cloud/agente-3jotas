@@ -12,9 +12,10 @@ create table public.mensagens(id uuid primary key default gen_random_uuid(),conv
 create table public.analises(id uuid primary key default gen_random_uuid(),conversa_id uuid references conversas(id),dia date not null,status public.analise_status not null default 'pendente',${campos},modelo_usado text,erro text,justificativa_geral text,analisado_em timestamptz,revisado boolean default false,revisado_em timestamptz,resumo_revisao text,created_at timestamptz default now(),updated_at timestamptz default now(),unique(conversa_id,dia));
 create table public.analises_bruta(conversa_id uuid,dia date,${campos},modelo_usado text,justificativa_geral text,criado_em timestamptz default now(),primary key(conversa_id,dia));
 `);
-const migration = process.argv[2] || 'supabase/migrations/20261008171820_gemini_execucoes_diarias.sql';
+const migration = process.argv[2];
+const arquivos=['20261013142056_gemini_execucoes_diarias_estrutura.sql','20261013142109_gemini_execucoes_diarias_operacoes.sql','20261013142303_gemini_execucoes_diarias_midia_e_fila.sql','20261013142758_gemini_recuperacao_midia_periodo.sql'];
 await pg.exec("create table public.analise_batches(status text);insert into public.analise_batches values('in_progress');");
-const sqlMigration=await fs.readFile(migration,'utf8');
+const sqlMigration=migration ? await fs.readFile(migration,'utf8') : (await Promise.all(arquivos.map(nome=>fs.readFile('supabase/migrations/'+nome,'utf8')))).join('\n');
 let bloqueouLegado=false;
 try{await pg.exec(sqlMigration);}catch(err){bloqueouLegado=String(err).includes('batches legados ativos');await pg.exec('rollback');}
 if(!bloqueouLegado) throw new Error('Migração não protege batches legados');
@@ -97,10 +98,36 @@ for(let ciclo=0;ciclo<2;ciclo++){
 }
 assert(total===61,'mais de 50 pendências não drenaram');
 assert((await q("select count(*)::integer as n from analises where conversa_id=$1 and dia between '2026-06-01' and '2026-07-31'",[id]))[0].n===61,'pendências históricas apagadas');
+// Recuperação de mídia reserva apenas o período e preserva texto fora dele.
+const dentro=(await q("insert into mensagens(conversa_id,texto,enviada_em,midia_descrita) values($1,'pendente no período','2026-10-09T15:00:00Z',false) returning id",[id]))[0];
+const fora=(await q("insert into mensagens(conversa_id,texto,enviada_em,midia_descrita) values($1,'texto fora do período','2026-10-07T15:00:00Z',false) returning id",[id]))[0];
+const periodo=await q("select * from gemini_reservar_midia_periodo(1,'2026-10-09','2026-10-10')");
+assert(periodo.length===1 && periodo[0].id===dentro.id,'mídia fora do período reservada');
+const preservada=(await q('select texto,midia_tentativas from mensagens where id=$1',[fora.id]))[0];
+assert(preservada.texto==='texto fora do período' && preservada.midia_tentativas===0,'recuperação alterou mídia fora do período');
 // RPCs estreitas não são públicas; tabelas com snapshots possuem RLS.
 assert(!(await q("select has_function_privilege('anon','public.gemini_reservar(uuid,date,text,text,text,text,jsonb,bigint)','execute') as permitido"))[0].permitido,'RPC exposta anon');
 assert((await q("select relrowsecurity from pg_class where relname='gemini_execucoes'"))[0].relrowsecurity,'snapshots sem RLS');
 assert((await q('select entrada,saida,raciocinio from gemini_consumo_diario')).length>0,'métricas ausentes');
 await pg.exec(await fs.readFile('supabase/manual/relatorio-consumo-gemini.sql','utf8'));
+// O script operacional preserva autenticação, ativa ambos os jobs e se remove ao terminar.
+await pg.exec(`create schema cron; create schema net;
+create table cron.job(jobid bigint generated always as identity primary key,jobname text unique,schedule text,command text,active boolean default true);
+create table net.chamadas(id bigint generated always as identity,body jsonb,timeout_ms integer);
+create function net.http_post(url text,headers jsonb,body jsonb,timeout_milliseconds integer default 1000) returns bigint language sql as 'insert into net.chamadas(body,timeout_ms) values(body,timeout_milliseconds) returning id';
+create function cron.schedule(nome text,agenda text,comando text) returns bigint language sql as 'insert into cron.job(jobname,schedule,command) values(nome,agenda,comando) on conflict(jobname) do update set schedule=excluded.schedule,command=excluded.command returning jobid';
+create function cron.alter_job(job_id bigint,schedule text default null,command text default null,active boolean default null) returns void language sql as 'update cron.job j set schedule=coalesce(alter_job.schedule,j.schedule),command=coalesce(alter_job.command,j.command),active=coalesce(alter_job.active,j.active) where j.jobid=job_id';
+create function cron.unschedule(nome text) returns boolean language plpgsql as 'begin delete from cron.job where jobname=nome; return found; end';`);
+const comandoTeste="select net.http_post(url := 'https://teste/functions/v1/analysis-batch-submit',headers := '{\"Authorization\":\"Bearer teste\"}'::jsonb,body := '{}'::jsonb);";
+await q('select cron.schedule($1,$2,$3)',['analysis-batch-submit','*/10 * * * *',comandoTeste]);
+await q('select cron.schedule($1,$2,$3)',['processar-midia-pendente','*/5 * * * *',comandoTeste]);
+await pg.exec(await fs.readFile('supabase/manual/recuperar-analises-outubro-2026.sql','utf8'));
+assert((await q("select count(*)::integer as n from cron.job where jobname like 'gemini-recuperacao-%' and active"))[0].n===2,'job de recuperação não ativado');
+assert((await q("select timeout_ms from net.chamadas where body->>'diaInicio'='2026-10-09'"))[0].timeout_ms===120000,'timeout de mídia não corrigido');
+assert((await q("select command from cron.job where jobname='processar-midia-pendente'"))[0].command.includes('Bearer teste'),'autenticação não preservada');
+await q("update analises set status='consolidada' where dia between '2026-10-08' and '2026-10-12'");
+await q("update mensagens set midia_descrita=true where enviada_em>='2026-10-09T03:00:00Z' and enviada_em<'2026-10-11T03:00:00Z'");
+for(const j of await q("select command from cron.job where jobname like 'gemini-recuperacao-%'")){await pg.exec(j.command);}
+assert((await q("select count(*)::integer as n from cron.job where jobname like 'gemini-recuperacao-%'"))[0].n===0,'recuperação não encerrou os jobs');
 console.log('OK: migração real + reservas, dias, versões, revisão, incerteza, mídia, permissões e métricas.');
 await pg.close();

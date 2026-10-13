@@ -433,6 +433,17 @@ function limitesDia(dia: string): { inicio: string; fim: string } {
   if (Number.isNaN(inicio.getTime()) || inicio.toISOString().slice(0, 10) !== dia) throw new Error("Dia inválido");
   return { inicio: inicio.toISOString(), fim: new Date(inicio.getTime() + 86400000).toISOString() };
 }
+function intervaloRecuperacao(body: Registro, hoje: string): { inicio: string; fim: string } | null {
+  if (body.recuperacao !== true) return null;
+  const inicio = body.diaInicio;
+  const fim = body.diaFim;
+  const a = limitesDia(inicio).inicio;
+  const b = limitesDia(fim).inicio;
+  if (inicio > fim || fim >= hoje || (Date.parse(b) - Date.parse(a)) / 86400000 > 6) {
+    throw new Error("Recuperação exige até sete dias encerrados, em ordem");
+  }
+  return { inicio, fim };
+}
 function extrairJSONResposta(data: Registro, parametros: ParametroCriterio[], etapa: string): Registro {
   const c = data.candidates?.[0];
   if (data.promptFeedback?.blockReason || c?.finishReason !== "STOP") throw new Error("Resposta bloqueada, vazia ou truncada");
@@ -548,7 +559,13 @@ function criarSnapshot(conversaId: string, dia: string, mensagens: Mensagem[], p
 
 Deno.serve(async (req) => {
   if (!autorizado(req)) return jsonResposta({ erro: "unauthorized" }, 401);
-  if (!janelaNoturna()) return jsonResposta({ ok: true, enviados: 0, motivo: "fora da janela 00:00–03:59 Fortaleza" });
+  const hoje = diaLocal(new Date().toISOString());
+  let recuperacao: { inicio: string; fim: string } | null;
+  try {
+    const body = await req.json().catch(() => ({}));
+    recuperacao = intervaloRecuperacao(body, hoje);
+  } catch { return jsonResposta({ erro: "Intervalo de recuperação inválido; informe diaInicio e diaFim encerrados (máximo sete dias)" }, 400); }
+  if (!recuperacao && !janelaNoturna()) return jsonResposta({ ok: true, enviados: 0, motivo: "fora da janela 00:00–03:59 Fortaleza" });
   const apiKey = Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) return jsonResposta({ erro: "GEMINI_API_KEY não configurada" }, 500);
   const supabase = createServiceClient();
@@ -557,14 +574,15 @@ Deno.serve(async (req) => {
   const requests: Registro[] = [];
   const erros: string[] = [];
   try {
-    const hoje = diaLocal(new Date().toISOString());
     const parametros = await buscarParametrosAtivos(supabase);
     const playbook = await buscarPlaybooksAtivos(supabase);
     // Uma página maior permite pular mídia bloqueada sem paralisar os demais dias.
-    const pares = await db<Registro[]>(supabase.from("analises").select("conversa_id,dia,conteudo_versao")
+    let consulta = supabase.from("analises").select("conversa_id,dia,conteudo_versao")
       .eq("status", "pendente").lt("dia", hoje)
       .or(`proxima_tentativa_em.is.null,proxima_tentativa_em.lte.${new Date().toISOString()}`)
-      .order("dia").order("conversa_id").limit(200));
+      .order("dia").order("conversa_id").limit(200);
+    if (recuperacao) consulta = consulta.gte("dia", recuperacao.inicio).lte("dia", recuperacao.fim);
+    const pares = await db<Registro[]>(consulta);
     for (const par of pares ?? []) {
       if (execucoes.length >= 50 || Date.now() - inicio > 65_000) break;
       try {
@@ -589,7 +607,12 @@ Deno.serve(async (req) => {
         }
         const snapshot = criarSnapshot(conversa.id, par.dia, mensagens, parametros, playbook);
         const e = await reservar(supabase, par, snapshot, "analise", "batch", await hashInput(snapshot));
-        if (e) { execucoes.push(e); requests.push(snapshot.requestAnalise); }
+        if (e) {
+          if (recuperacao) {
+            await db(supabase.from("gemini_execucoes").update({ snapshot: { ...snapshot, operacao: { tipo: "recuperacao", ...recuperacao } } }).eq("id", e.id).eq("estado", "reservada"));
+          }
+          execucoes.push(e); requests.push(snapshot.requestAnalise);
+        }
       } catch {
         erros.push(`Preparação não concluída: ${par.conversa_id}/${par.dia}`);
         await db(supabase.from("analises").update({ proxima_tentativa_em: new Date(Date.now() + 15 * 60_000).toISOString() })
@@ -597,7 +620,7 @@ Deno.serve(async (req) => {
       }
     }
     await enviarLote(supabase, apiKey, execucoes, requests);
-    return jsonResposta({ ok: true, reservadas: execucoes.length, erros });
+    return jsonResposta({ ok: true, reservadas: execucoes.length, recuperacao, erros });
   } catch {
     return jsonResposta({ ok: false, erro: "Falha no processamento; confira reservas e configuração do banco" }, 502);
   }

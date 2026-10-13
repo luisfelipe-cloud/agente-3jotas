@@ -11,8 +11,8 @@ async function carregar(nome: string, exports: string[]) {
   return await import(`data:application/typescript;base64,${btoa(unescape(encodeURIComponent(fonte)))}`);
 }
 function igual(a: unknown, b: unknown) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${JSON.stringify(a)} != ${JSON.stringify(b)}`); }
-const submit = await carregar('analysis-batch-submit', ['limitesDia','janelaNoturna','hashInput','criarSnapshot','buscarMensagensDoGrupo','extrairJSONResposta']);
-const media = await carregar('processar-midia-pendente', ['resolverMime','extrairTexto','encodeBase64']);
+const submit = await carregar('analysis-batch-submit', ['limitesDia','janelaNoturna','hashInput','criarSnapshot','buscarMensagensDoGrupo','extrairJSONResposta','intervaloRecuperacao']);
+const media = await carregar('processar-midia-pendente', ['resolverMime','extrairTexto','encodeBase64','configuracaoPensamento']);
 Deno.test('fronteiras do dia e janela noturna em Fortaleza', () => {
   igual(submit.limitesDia('2026-10-07'), { inicio: '2026-10-07T03:00:00.000Z', fim: '2026-10-08T03:00:00.000Z' });
   igual(submit.janelaNoturna(new Date('2026-10-08T03:00:00Z')), true);
@@ -75,4 +75,18 @@ Deno.test('envio Batch usa ID de execução e registra envio incerto sem repetir
     igual(payload.batch.input_config.requests.requests[0].metadata.key,'exec-1');
     igual(chamadas[0].nome,'gemini_marcar_envio');igual(chamadas[1].args.p_incerta,true);igual(chamadas.length,2);
   }finally{globalThis.fetch=original;}
+});
+
+Deno.test('recuperação exige acionamento explícito e no máximo sete dias encerrados', () => {
+  igual(submit.intervaloRecuperacao({},'2026-10-13'),null);
+  igual(submit.intervaloRecuperacao({recuperacao:true,diaInicio:'2026-10-08',diaFim:'2026-10-12'},'2026-10-13'),{inicio:'2026-10-08',fim:'2026-10-12'});
+  for(const intervalo of [{diaInicio:'2026-10-09',diaFim:'2026-10-13'},{diaInicio:'2026-10-01',diaFim:'2026-10-12'},{diaInicio:'2026-10-12',diaFim:'2026-10-09'},{diaInicio:'inválido',diaFim:'2026-10-12'}]){
+    let rejeitada=false;try{submit.intervaloRecuperacao({recuperacao:true,...intervalo},'2026-10-13');}catch{rejeitada=true;}igual(rejeitada,true);
+  }
+});
+
+Deno.test('pensamento de mídia respeita a família do modelo', () => {
+ igual(media.configuracaoPensamento('gemini-2.5-flash'),{thinkingConfig:{thinkingBudget:0}});
+ igual(media.configuracaoPensamento('gemini-3.6-flash'),{thinkingConfig:{thinkingLevel:'minimal'}});
+ igual(media.configuracaoPensamento('modelo-desconhecido'),{});
 });

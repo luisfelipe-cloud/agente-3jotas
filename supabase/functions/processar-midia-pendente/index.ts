@@ -41,6 +41,7 @@ interface MensagemPendente {
 // disputar o WORKER_RESOURCE_LIMIT; com cron de 5 em 5 minutos, um volume
 // alto de mídia pendente é absorvido em poucos ciclos, não numa invocação só.
 const LOTE_MAXIMO = 15;
+const MODELO_MIDIA = Deno.env.get("GEMINI_MEDIA_MODEL") ?? "gemini-3.6-flash";
 
 const INSTRUCAO_AUDIO =
   `Transcreva toda a fala deste áudio, do início ao fim, fielmente e no idioma original (normalmente português brasileiro).
@@ -62,9 +63,33 @@ async function checarBanco(consulta: PromiseLike<{ data: any; error: any }>): Pr
   if (error) throw new Error(`Banco: ${error.message}`);
   return data;
 }
+function periodoRecuperacaoMidia(body: any): { inicio: string; fim: string } | null {
+  if (body.recuperacao !== true) return null;
+  const inicio = body.diaInicio;
+  const fim = body.diaFim;
+  const hoje = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Fortaleza", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  for (const dia of [inicio, fim]) {
+    if (typeof dia !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(dia)) throw new Error("Dia inválido");
+    const d = new Date(`${dia}T00:00:00-03:00`);
+    if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== dia) throw new Error("Dia inválido");
+  }
+  if (inicio > fim || fim >= hoje || (Date.parse(fim) - Date.parse(inicio)) / 86400000 > 6) throw new Error("Intervalo inválido");
+  return { inicio, fim };
+}
 Deno.serve(async (req) => {
   const segredo = Deno.env.get("CRON_SECRET");
   if (!segredo || req.headers.get("Authorization") !== `Bearer ${segredo}`) return new Response("unauthorized", { status: 401 });
+  let periodo: { inicio: string; fim: string } | null;
+  let limite = LOTE_MAXIMO;
+  try {
+    const body = await req.json().catch(() => ({}));
+    periodo = periodoRecuperacaoMidia(body);
+    if (body.limite != null) {
+      if (!Number.isInteger(body.limite) || body.limite < 1 || body.limite > LOTE_MAXIMO) throw new Error("Limite inválido");
+      limite = body.limite;
+    }
+  }
+  catch { return Response.json({ erro: "Recuperação exige até sete dias encerrados" }, { status: 400 }); }
   const clintApiKey = Deno.env.get("CLINT_API_KEY");
   const geminiApiKey = Deno.env.get("GEMINI_API_KEY");
   if (!clintApiKey || !geminiApiKey) return new Response("Chaves não configuradas", { status: 500 });
@@ -73,9 +98,9 @@ Deno.serve(async (req) => {
   let processadas = 0;
   let falhas = 0;
   try {
-    for (let i = 0; i < LOTE_MAXIMO && Date.now() - inicio < 65_000; i++) {
+    for (let i = 0; i < limite && Date.now() - inicio < 65_000; i++) {
       // Reserva apenas o próximo item: mídia não iniciada não consome tentativa.
-      const rows = await checarBanco(supabase.rpc("gemini_reservar_midia", { p_limite: 1 }));
+      const rows = await checarBanco(periodo ? supabase.rpc("gemini_reservar_midia_periodo", { p_limite: 1, p_inicio: periodo.inicio, p_fim: periodo.fim }) : supabase.rpc("gemini_reservar_midia", { p_limite: 1 }));
       const msg = rows?.[0];
       if (!msg) break;
       try {
@@ -85,7 +110,7 @@ Deno.serve(async (req) => {
         });
         const gravada = await checarBanco(supabase.rpc("gemini_finalizar_midia", {
           p_id: msg.id, p_lease: msg.midia_lease, p_texto: resultado.texto, p_erro: null,
-          p_uso: resultado.uso, p_modelo: "gemini-2.5-flash", p_modelo_retornado: resultado.modeloRetornado, p_repetir: false,
+          p_uso: resultado.uso, p_modelo: MODELO_MIDIA, p_modelo_retornado: resultado.modeloRetornado, p_repetir: false,
         }));
         if (!gravada) throw new Error("Reserva de mídia perdeu validade");
         processadas++;
@@ -94,12 +119,12 @@ Deno.serve(async (req) => {
         const falha = err instanceof FalhaMidia ? err : new FalhaMidia("Processamento não confirmado; conferir item", null, null, false);
         await checarBanco(supabase.rpc("gemini_finalizar_midia", {
           p_id: msg.id, p_lease: msg.midia_lease, p_texto: null, p_erro: falha.message,
-          p_uso: falha.uso, p_modelo: "gemini-2.5-flash", p_modelo_retornado: falha.modeloRetornado, p_repetir: falha.repetir,
+          p_uso: falha.uso, p_modelo: MODELO_MIDIA, p_modelo_retornado: falha.modeloRetornado, p_repetir: falha.repetir,
         }));
         falhas++;
       }
     }
-    return new Response(JSON.stringify({ ok: true, processadas, falhas }), { headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, processadas, falhas, periodo }), { headers: { "Content-Type": "application/json" } });
   } catch { return new Response(JSON.stringify({ erro: "Falha no banco/configuração do processamento de mídia" }), { status: 502, headers: { "Content-Type": "application/json" } }); }
 });
 
@@ -147,7 +172,7 @@ async function descreverMidia(
     ...(mimeReal.startsWith("audio/") ? { generationConfig: {
       temperature: 0,
       maxOutputTokens: 16384,
-      thinkingConfig: { thinkingBudget: 0 },
+      ...configuracaoPensamento(MODELO_MIDIA),
     } } : {}),
   });
   // O limite considera o JSON inteiro, incluindo a expansão em base64.
@@ -157,7 +182,7 @@ async function descreverMidia(
   await antesDoEnvio();
   let resp: Response;
   try { resp = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+    `https://generativelanguage.googleapis.com/v1beta/models/${MODELO_MIDIA}:generateContent`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": geminiApiKey },
@@ -172,6 +197,11 @@ async function descreverMidia(
   catch { throw new FalhaMidia("Resposta de mídia inválida; conferir antes de nova inferência", data.usageMetadata ?? null, data.modelVersion ?? null, false); }
 }
 
+function configuracaoPensamento(modelo: string): Record<string, unknown> {
+  if (modelo.startsWith("gemini-2.5-flash")) return { thinkingConfig: { thinkingBudget: 0 } };
+  if (modelo === "gemini-3.6-flash" || modelo === "gemini-3.5-flash-lite") return { thinkingConfig: { thinkingLevel: "minimal" } };
+  return {};
+}
 function resolverMime(mime: string, header: string | null, arquivo: ArrayBuffer): string {
   const bytes = new Uint8Array(arquivo);
   const assinatura = new TextDecoder("latin1").decode(bytes.subarray(0, 12));
