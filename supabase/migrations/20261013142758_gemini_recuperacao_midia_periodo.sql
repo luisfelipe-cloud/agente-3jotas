@@ -11,4 +11,3 @@ end $$;
 
 revoke execute on function public.gemini_reservar_midia_periodo(integer,date,date) from public,anon,authenticated;
 grant execute on function public.gemini_reservar_midia_periodo(integer,date,date) to service_role;
-

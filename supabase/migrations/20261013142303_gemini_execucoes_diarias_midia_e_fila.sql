@@ -119,4 +119,3 @@ revoke execute on function public.gemini_pendentes_revisao() from public,anon,au
 grant execute on function public.gemini_pendentes_revisao() to service_role;
 
 do $$ declare f record; begin for f in select p.oid::regprocedure as assinatura from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'gemini_%' or p.proname='enfileirar_analise_diaria') loop execute format('revoke execute on function %s from public,anon,authenticated',f.assinatura); execute format('grant execute on function %s to service_role',f.assinatura); end loop; end $$;
-

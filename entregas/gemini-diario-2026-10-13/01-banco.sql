@@ -103,7 +103,6 @@ end $$;
 
 do $$ declare f record; begin for f in select p.oid::regprocedure as assinatura from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'gemini_%' or p.proname='enfileirar_analise_diaria') loop execute format('revoke execute on function %s from public,anon,authenticated',f.assinatura); execute format('grant execute on function %s to service_role',f.assinatura); end loop; end $$;
 
-
 create or replace function public.gemini_reservar(p_conversa_id uuid,p_dia date,p_hash text,p_etapa text,p_modelo text,p_modalidade text,p_snapshot jsonb,p_versao bigint)
 returns setof public.gemini_execucoes language plpgsql security invoker set search_path='' as $$
 declare e public.gemini_execucoes; v bigint;
@@ -255,7 +254,6 @@ end $$;
 
 do $$ declare f record; begin for f in select p.oid::regprocedure as assinatura from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'gemini_%' or p.proname='enfileirar_analise_diaria') loop execute format('revoke execute on function %s from public,anon,authenticated',f.assinatura); execute format('grant execute on function %s to service_role',f.assinatura); end loop; end $$;
 
-
 create or replace function public.gemini_reservar_midia(p_limite integer default 15)
 returns setof public.mensagens language plpgsql security invoker set search_path='' as $$
 begin
@@ -378,7 +376,6 @@ grant execute on function public.gemini_pendentes_revisao() to service_role;
 
 do $$ declare f record; begin for f in select p.oid::regprocedure as assinatura from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname='public' and (p.proname like 'gemini_%' or p.proname='enfileirar_analise_diaria') loop execute format('revoke execute on function %s from public,anon,authenticated',f.assinatura); execute format('grant execute on function %s to service_role',f.assinatura); end loop; end $$;
 
-
 create or replace function public.gemini_reservar_midia_periodo(p_limite integer,p_inicio date,p_fim date)
 returns setof public.mensagens language plpgsql security invoker set search_path='' as $$
 begin
@@ -392,6 +389,5 @@ end $$;
 
 revoke execute on function public.gemini_reservar_midia_periodo(integer,date,date) from public,anon,authenticated;
 grant execute on function public.gemini_reservar_midia_periodo(integer,date,date) to service_role;
-
 
 commit;
